@@ -58,8 +58,8 @@
                 attributeState "position", label: 'Position', action:"window shade.presetPosition"
             }
 			tileAttribute("moving", key: "VALUE_CONTROL") {
-				attributeState "VALUE_UP", label: '${currentValue}', action: "levelUp"
-				attributeState "VALUE_DOWN", label: '${currentValue}', action: "levelDown"
+				attributeState "VALUE_UP", action: "levelUp"
+				attributeState "VALUE_DOWN", action: "levelDown"
 			}
 		}
 		standardTile("shadeRefresh", "device.refresh", width: 1, height: 1, decoration: "flat") {
