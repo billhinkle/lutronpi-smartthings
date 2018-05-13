@@ -8,10 +8,14 @@ Due to essential divergences, LutronPi 2.x Service Manager and Device Handlers f
 FUNCTION: The LutronPi application serves to connect Lutron lighting bridges (SmartBridge, SmartBridge Pro, RA2/Select repeater) to a local hub of the Samsung SmartThings home authomation platform. There is an 'official' Lutron-to-SmartThings integration, which unfortunately does not integrate the Lutron Pico remote button fobs into SmartThings. LutronPi does connect the Pico buttons to SmartThings, so long as the Picos are paired to a Lutron SmartBridge Pro or RA2/Select repeater (not to a standard retail SmartBridge).
 
 FORM: The LutronPi application comprises two elements:
-
-    A server application running under node.js on an independent computer (e.g. a Raspberry Pi, or a desktop, laptop, or potentially a NAS drive, etc.). The server must be on the same local Ethernet subnet as the Lutron bridge(s) and the SmartThings hub.
-    A SmartThings "SmartApp" service manager application, along with its associated device handlers. These Groovy modules all run on the SmartThings platform, with functions both local to the hub and in the cloud.
-
+  1. A server application running under node.js on an independent computer (e.g. a Raspberry Pi, or a desktop,
+  laptop, or potentially a NAS drive, etc.).  The server must be on the same local Ethernet subnet as the
+  Lutron bridge(s) and the SmartThings hub.
+  See: https://github.com/billhinkle/lutronpi-server
+  2. A SmartThings "SmartApp" service manager application, along with its associated device handlers. These
+  Groovy modules all run on the SmartThings platform, with functions both local to the hub and in the cloud.
+  See: https://github.com/billhinkle/lutronpi-smartthings
+    
 UPDATES: beyond the LutronPro 1.x package and its support of Lutron dimmers, switches and 3BRL Picos:
   * All updates listed in the lutronpi-server README, including support of multiple Lutron bridges
   * Service Manager SmartApp: only a single LutronPi server can be selected (with multiple bridges connected to that)
