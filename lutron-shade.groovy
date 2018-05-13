@@ -30,7 +30,7 @@
 		command "levelDown"
 		command "levelStop"
 
-		attribute "shadeControl", "enum", ["off", "on", "\u25BC", "\u25B2", "\u25BD","\u25B3"]	// "?", "?", "?", "?"
+		attribute "shadeControl", "enum", ["off", "on", "\u25BC", "\u25B2", "\u25BD","\u25B3"]	// "▼", "▲", "▽", "△"
         attribute "position", "number"
 		attribute "moving", "number"
 		attribute "lutronInfo", "string"
@@ -44,12 +44,12 @@
     tiles(scale: 2) {
         multiAttributeTile(name:"shade", type: "generic", width: 6, height: 4, canChangeIcon: true, canChangeBackground: true){
             tileAttribute ("shadeControl", key: "PRIMARY_CONTROL") {
-                attributeState "up", label:'${name}', action:"window shade.close", icon:"http://oi66.tinypic.com/2h7la13.jpg", backgroundColor:"#a1c1f1", nextState:"\u25BC"	//"?"
-                attributeState "down", label:'${name}', action:"window shade.open", icon:"http://oi65.tinypic.com/i5dg5s.jpg", backgroundColor:"#cccccc", nextState:"\u25B2"	//"?"
-                attributeState "\u25B2", label:'${name}', action:"levelStop", icon:"st.custom.buttons.add-icon", backgroundColor:"#83abe6"	// "?"
-                attributeState "\u25BC", label:'${name}', action:"levelStop", icon:"st.custom.buttons.subtract-icon", backgroundColor:"#bbbbbb"	// "?"
-				attributeState "\u25B3", label:'STOP ${name}', action:"levelStop", icon:"st.custom.buttons.add-icon", backgroundColor:"#7193c6"	// "?"
-				attributeState "\u25BD", label:'STOP ${name}', action:"levelStop", icon:"st.custom.buttons.subtract-icon", backgroundColor:"#999999"	// "?"
+                attributeState "up", label:'${name}', action:"window shade.close", icon:"http://oi66.tinypic.com/2h7la13.jpg", backgroundColor:"#a1c1f1", nextState:"\u25BC"	//"▼"
+                attributeState "down", label:'${name}', action:"window shade.open", icon:"http://oi65.tinypic.com/i5dg5s.jpg", backgroundColor:"#cccccc", nextState:"\u25B2"	//"▲"
+                attributeState "\u25B2", label:'${name}', action:"levelStop", icon:"st.custom.buttons.add-icon", backgroundColor:"#83abe6"	// "▲"
+                attributeState "\u25BC", label:'${name}', action:"levelStop", icon:"st.custom.buttons.subtract-icon", backgroundColor:"#bbbbbb"	// "▼"
+				attributeState "\u25B3", label:'STOP ${name}', action:"levelStop", icon:"st.custom.buttons.add-icon", backgroundColor:"#7193c6"	// "△"
+				attributeState "\u25BD", label:'STOP ${name}', action:"levelStop", icon:"st.custom.buttons.subtract-icon", backgroundColor:"#999999"	// "▽"
             }
 			tileAttribute("shadeControl", key: "SECONDARY_CONTROL") {
 				attributeState "default", label: '', action: "fullOpen", icon:"st.Weather.weather14"
@@ -103,7 +103,7 @@ def fullOpen() {
 	parent.on(this)
 //	depend on the Lutron's response to update this state, to avoid races
 //	sendEvent(name: 'windowShade', value: 'open')
-	sendEvent(name: 'shadeControl', value: '\u25B2')	// "?"
+	sendEvent(name: 'shadeControl', value: '\u25B2')	// "▲"
 	log.info "Shade ${device.label} Opening (full)"
 }
 
@@ -141,7 +141,7 @@ def levelUp() {
 	} else {
 		state.moving = true;
 		parent.fadeLevel(this, "raise")
-	   	sendEvent(name: 'shadeControl', value: '\u25B3')	// '?'
+	   	sendEvent(name: 'shadeControl', value: '\u25B3')	// '△'
 	}
 //	setLevel(device.currentValue('level') + 5);
 }
@@ -152,7 +152,7 @@ def levelDown() {
 	} else {
 		state.moving = true;
 		parent.fadeLevel(this, "lower")
-	   	sendEvent(name: 'shadeControl', value: '\u25BD')	// '?'
+	   	sendEvent(name: 'shadeControl', value: '\u25BD')	// '▽'
     }
 //	setLevel(device.currentValue('level') - 5);
 }
