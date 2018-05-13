@@ -37,7 +37,7 @@
 		command "levelDown"
 		command "levelStop"
 
-		attribute "dimControl", "enum", ["off", "on", "\u25BC", "\u25B2", "\u25BD", "\u25B3"] //'off','on','?', '?', '?', '?'
+		attribute "dimControl", "enum", ["off", "on", "\u25BC", "\u25B2", "\u25BD", "\u25B3"] //'off','on','▼', '▲', '▽', '△'
 		attribute "fading", "number"
 		attribute "rampOffSeconds", "number"
 		attribute "rampOffEnable", "enum", ["false", "true"]
@@ -54,12 +54,12 @@
     tiles(scale: 2) {
         multiAttributeTile(name:"dimmer", type: "generic", width: 6, height: 4, canChangeIcon: true, canChangeBackground: true){
             tileAttribute ("dimControl", key: "PRIMARY_CONTROL") {
-                attributeState "on", label:'${name}', action: "switch.off", icon:"st.switches.light.on", backgroundColor:"#00a0dc", nextState:"\u25BC" //"?"
-                attributeState "off", label:'${name}', action: "switch.on", icon:"st.switches.light.off", backgroundColor:"#ffffff", nextState:"\u25B2" //"?"
-                attributeState "\u25B2", label:'${name}', action: "levelStop", icon:"st.switches.light.on", backgroundColor:"#80c0ff" // "#00a0dc" //"?"
-                attributeState "\u25BC", label:'${name}', action: "levelStop", icon:"st.switches.light.off", backgroundColor:"#c0f0ff" // "#ffffff" //"?"
-				attributeState "\u25B3", label:'STOP ${name}', action: "levelStop", icon:"st.switches.light.on", backgroundColor:"#0000ff" //"?"
-				attributeState "\u25BD", label:'STOP ${name}', action: "levelStop", icon:"st.switches.light.off", backgroundColor:"#00007f" //"?"
+                attributeState "on", label:'${name}', action: "switch.off", icon:"st.switches.light.on", backgroundColor:"#00a0dc", nextState:"\u25BC" //"▼"
+                attributeState "off", label:'${name}', action: "switch.on", icon:"st.switches.light.off", backgroundColor:"#ffffff", nextState:"\u25B2" //"▲"
+                attributeState "\u25B2", label:'${name}', action: "levelStop", icon:"st.switches.light.on", backgroundColor:"#80c0ff" // "#00a0dc" //"▲"
+                attributeState "\u25BC", label:'${name}', action: "levelStop", icon:"st.switches.light.off", backgroundColor:"#c0f0ff" // "#ffffff" //"▼"
+				attributeState "\u25B3", label:'STOP ${name}', action: "levelStop", icon:"st.switches.light.on", backgroundColor:"#0000ff" //"△"
+				attributeState "\u25BD", label:'STOP ${name}', action: "levelStop", icon:"st.switches.light.off", backgroundColor:"#00007f" //"▽"
             }
 			tileAttribute("dimControl", key: "SECONDARY_CONTROL") {
 				attributeState "default", label: '', action: "fullOn", icon:"st.Weather.weather14"
@@ -125,7 +125,7 @@ def fullOn() {
 	parent.on(this, device.currentValue("rampOnEnable").toBoolean()?device.currentValue("rampOnSeconds"):0)
 //	depend on the Lutron's response to update this state, to avoid races
 //	sendEvent(name: "switch", value: "on")
-	sendEvent(name: 'dimControl', value: '\u25B2')	// "?"
+	sendEvent(name: 'dimControl', value: '\u25B2')	//"▲"
 	log.info "Dimmer ${device.label} On (full)"
 }
 
@@ -183,7 +183,7 @@ def levelUp() {
 	} else {
 		state.fading = true;
 		parent.fadeLevel(this, "raise")
-	   	sendEvent(name: "dimControl", value: '\u25B3') //'?'
+	   	sendEvent(name: "dimControl", value: '\u25B3') //'△'
 	}
 //	setLevel(device.currentValue("level") + 5);
 }
@@ -194,7 +194,7 @@ def levelDown() {
 	} else {
 		state.fading = true;
 		parent.fadeLevel(this, "lower")
-	   	sendEvent(name: "dimControl", value: '\u25BD') //'?'
+	   	sendEvent(name: "dimControl", value: '\u25BD') //'▽'
     }
 //	setLevel(device.currentValue("level") - 5);
 }
