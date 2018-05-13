@@ -68,8 +68,8 @@
                 attributeState "level", label: 'Brightness', action: "setLevelUser" //"switch level.setLevel"
             }
 			tileAttribute("fading", key: "VALUE_CONTROL") {
-				attributeState "VALUE_UP", label: '${currentValue}', action: "levelUp"
-				attributeState "VALUE_DOWN", label: '${currentValue}', action: "levelDown"
+				attributeState "VALUE_UP", action: "levelUp"
+				attributeState "VALUE_DOWN", action: "levelDown"
 			}
 		}
 		standardTile("rampOffControl", "rampOffEnable", width: 2, height: 2, decoration: "flat") {
