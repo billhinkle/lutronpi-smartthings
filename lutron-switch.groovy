@@ -33,10 +33,10 @@
     tiles(scale: 2) {
         multiAttributeTile(name:"switch", type: "generic", width: 6, height: 4, canChangeIcon: true, canChangeBackground: true){
 			tileAttribute ("device.switch", key: "PRIMARY_CONTROL") {
-				attributeState "on", label:'${name}', action:"switch.off", icon:"st.switches.switch.on", backgroundColor:"#00a0dc", nextState:"?"
-				attributeState "off", label:'${name}', action:"switch.on", icon:"st.switches.switch.off", backgroundColor:"#ffffff", nextState:"?"
-				attributeState "?", label:'${name}', action:"switch.off", icon:"st.switches.switch.on", backgroundColor:"#00a0dc", nextState:"?"
-				attributeState "?", label:'${name}', action:"switch.on", icon:"st.switches.switch.off", backgroundColor:"#ffffff", nextState:"?"
+				attributeState "on", label:'${name}', action:"switch.off", icon:"st.switches.switch.on", backgroundColor:"#00a0dc", nextState:"\u25BC" //"▼"
+				attributeState "off", label:'${name}', action:"switch.on", icon:"st.switches.switch.off", backgroundColor:"#ffffff", nextState:"\u25B2" //"▲"
+				attributeState "\u25B2", label:'${name}', action:"switch.off", icon:"st.switches.switch.on", backgroundColor:"#00a0dc", nextState:"\u25BC" //"▼"
+				attributeState "\u25BC", label:'${name}', action:"switch.on", icon:"st.switches.switch.off", backgroundColor:"#ffffff", nextState:"\u25B2" //"▲"
             }
 		}
 		standardTile("switchRefresh", "device.refresh", width: 1, height: 1, decoration: "flat") {
