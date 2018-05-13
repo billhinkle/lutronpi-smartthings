@@ -52,7 +52,7 @@ definition(
 		name: "LutronPi Service Manager",
 		namespace: "lutronpi",
 		author: "Nate Schwartz + Bill Hinkle",
-		description: "Interface to talk with Lutron SmartBridge and add Pico Remotes v1+",
+		description: "Interface to talk with Lutron SmartBridge and add Pico Remotes v2+",
 		category: "SmartThings Labs",
 		iconUrl:	"http://i65.tinypic.com/nq8shi.png", // "http://oi65.tinypic.com/2evgrx4.jpg",
 		iconX2Url:	"http://i65.tinypic.com/nq8shi.png",
@@ -190,7 +190,7 @@ def deviceDiscovery() {
 			input "selectedPicos", "enum", required:false, submitOnChange:true, title:"Select Picos \n(${selectedPicos?.size()?:0} of ${picoOptions.size()?:0} found)",
 			      multiple:true, options:picoOptions, image: "http://i67.tinypic.com/4hujyv.png"
 
-			paragraph "Pico buttons can only be monitored from a Lutron Caséta Pro SmartBridge or RA2 Select Repeater. Picos on a standard SmartBridge cannot control devices in SmartThings.",
+			paragraph "Pico buttons can only be monitored from a Lutron CasÃ©ta Pro SmartBridge or RA2 Select Repeater. Picos on a standard SmartBridge cannot control devices in SmartThings.",
 					  hideWhenEmpty: "selectedPicos"
 		}
 
