@@ -38,7 +38,8 @@
 		command "levelStop"
 
 		attribute "dimControl", "enum", ["off", "on", "\u25BC", "\u25B2", "\u25BD", "\u25B3"] //'off','on','▼', '▲', '▽', '△'
-		attribute "fading", "number"
+		attribute "fullBright", "enum", ["false", "true"]
+		attribute "fading", "enum", ["VALUE_UP", "VALUE_DOWN"]
 		attribute "rampOffSeconds", "number"
 		attribute "rampOffEnable", "enum", ["false", "true"]
 		attribute "rampOnSeconds", "number"
@@ -52,7 +53,7 @@
 
 	// UI tile definitions
     tiles(scale: 2) {
-        multiAttributeTile(name:"dimmer", type: "generic", width: 6, height: 4, canChangeIcon: true, canChangeBackground: true){
+        multiAttributeTile(name:"dimmer", type: "lighting", width: 6, height: 4, canChangeIcon: true, canChangeBackground: true){
             tileAttribute ("dimControl", key: "PRIMARY_CONTROL") {
                 attributeState "on", label:'${name}', action: "switch.off", icon:"st.switches.light.on", backgroundColor:"#00a0dc", nextState:"\u25BC" //"▼"
                 attributeState "off", label:'${name}', action: "switch.on", icon:"st.switches.light.off", backgroundColor:"#ffffff", nextState:"\u25B2" //"▲"
@@ -61,15 +62,15 @@
 				attributeState "\u25B3", label:'STOP ${name}', action: "levelStop", icon:"st.switches.light.on", backgroundColor:"#0000ff" //"△"
 				attributeState "\u25BD", label:'STOP ${name}', action: "levelStop", icon:"st.switches.light.off", backgroundColor:"#00007f" //"▽"
             }
-			tileAttribute("dimControl", key: "SECONDARY_CONTROL") {
+			tileAttribute("fullBright", key: "SECONDARY_CONTROL") {
 				attributeState "default", label: '', action: "fullOn", icon:"st.Weather.weather14"
 			}
             tileAttribute ("device.level", key: "SLIDER_CONTROL") {
                 attributeState "level", label: 'Brightness', action: "setLevelUser" //"switch level.setLevel"
             }
 			tileAttribute("fading", key: "VALUE_CONTROL") {
-				attributeState "VALUE_UP", action: "levelUp"
-				attributeState "VALUE_DOWN", action: "levelDown"
+				attributeState "VALUE_UP", label: '', action: "levelUp"
+				attributeState "VALUE_DOWN", label: '', action: "levelDown"
 			}
 		}
 		standardTile("rampOffControl", "rampOffEnable", width: 2, height: 2, decoration: "flat") {
@@ -142,11 +143,12 @@ def on() {
 }
 
 def off() {
-	parent.off(this, device.currentValue("rampOffEnable").toBoolean()?device.currentValue("rampOffSeconds"):0)
+	def rate = device.currentValue("rampOffEnable").toBoolean()?device.currentValue("rampOffSeconds"):0
+	parent.off(this, rate)
 //	depend on the Lutron's response to update these states, to avoid races
 //	sendEvent(name: "switch", value: "off")
 //	sendEvent(name: "dimControl", value: "off")
-	log.info "Dimmer ${device.label} Off"
+	log.info "Dimmer ${device.label} Off ${rateLogText(rate)}"
 }
 
 // the default capability setLevel does not use the local ramp (fade) rates... must be specified, else 0/immediate
