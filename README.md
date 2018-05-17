@@ -30,10 +30,10 @@ The LutronPi application comprises two elements:
 	and then click the `Save` button.
   6. Click the `Update from Repo` button and then click the `lutronpi-smartthings` item.
   7. Select the listed `lutronpi-service-manager.groovy` file, check the `Publish` check box at bottom right and then click the `Execute Update` button.
-  8. The `lutronpi : LutronPi Service Manager` SmartApp should now appear in your SmartApps list as "published".
+  8. The `lutronpi: LutronPi Service Manager` SmartApp should now appear in your SmartApps list as "published".
   9. Click on the `My Device Handlers` tab and repeat steps #4 through #6 to access the Github repository.
   10. Select all of the 10 listed `lutron-*` files, check the `Publish` check box at bottom right and then click the `Execute Update` button.
-  11. Those `lutron-*` device handlers should now appear in your Device Handlers list as "published".
+  11. Those `lutronpi: Lutron *` device handlers should now appear in your Device Handlers list as "published".
   
   ALTERNATIVELY: You can also manually create the SmartApp and Device Handlers, without Github integration.
   Using the `+ New SmartApps` and `+ Create New Device Handler` buttons, build the respective files:
