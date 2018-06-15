@@ -30,6 +30,7 @@
  *												Added update notification subsystem via bridge device/scene config hash from Lutron Pi polling
  *												Added support for ST app virtual Pico buttons to trigger Lutron pico functions directly, and loop back to trigger ST actions
  *												Added support for ST app Lutron scene trigger to loop back and trigger ST actions as well
+ *		06/11/2018		Version:2.0-20180615	tweaked LutronPi discovery to improve handling of multiple servers - wjh
  *		
  *  Copyright 2017 Nate Schwartz
  *	Copyright 2018 William Hinkle (github: billhinkle) for Contributions noted wjh, which are assigned as Contributions to Licensor per Apache License Version 2.0
@@ -79,18 +80,28 @@ def getSelectorFlag() {
 
 def mainPage() {
 //	log.debug "Made it to mainPage()"
-	// Check to see if the LutronPi Server already (and still) exists; if not load LutronPi discovery, else skip discovery
-	if (lutronPiMap.size() == 1 && selectedLPi) {
+	// Check to see if the LutronPi Server already (and still) exists; if so, skip LutronPi discovery, else load LutronPi discovery
+	def allLutronPi = lutronPiMap
+	if (allLutronPi.containsKey(selectedLPi)) {
 		if (lPiReDiscovery(lutronPiMap[selectedLPi]))
 			return lPiFirstSelected()
 	}
-	return lPiDiscovery()
+	if (allLutronPi.size() > 1 || !allLutronPi.containsKey(selectedLPi)) {	// insure we get a fresh set of LutronPi discoveries
+		def selLPiValue = null
+		if (allLutronPi.containsKey(selectedLPi))
+			selLPiValue = allLutronPi[selectedLPi]
+		allLutronPi.clear()
+		if (selLPiValue)
+			allLutronPi[selectedLPi] = selLPiValue
+		state.ssdpSubscribed = false;
+	}
+    return lPiDiscovery()
 }
 
 def lPiFirstSelected() {
 //	log.debug "Made it to lPiFirstSelected()"
 	// subscribe to the server when the server is first selected, before setting options and discovering devices
-	if (lutronPiMap != [:] && selectedLPi) {
+	if (lutronPiMap.size() && selectedLPi) {
 		subscribeLutronPi()
 		selectorFlag.initSwitch = true;
 		selectorFlag.initScene = true;
@@ -109,24 +120,22 @@ Boolean lPiReDiscovery(lPiDevice) {
 // Preferences page to add LutronPi devices
 def lPiDiscovery() {
 //	log.debug "Made it to lPiDiscovery()"
-	def refreshInterval = 1
+	def refreshInterval
 
 	// Populate the preferences page with found devices
 	def lutronPiSelectList = lutronPiListForDialog
-	if (lutronPiSelectList != [:]) {
-//		if ((lutronPiSelectList.size() == 1) && selectedLPi)
-//			return lPiFirstSelected()	// if there's only one and it's been selected... let's go!
-		refreshInterval = 5
-	}
-	else {
+	if (!state.ssdpSubscribed) {
+     	refreshInterval = 2
 		// Perform LutronPi server LAN search vis SSDP
 		ssdpSubscribe()
 		log.debug 'Performing initial LutronPi discovery'
-		ssdpDiscover()
+	} else {
+		refreshInterval = 10
 	}
+	ssdpDiscover()
 
 	return dynamicPage(name:"lPiDiscovery", title:"LutronPi Server Discovery", nextPage:"lPiFirstSelected", refreshInterval: refreshInterval, uninstall: true) {
-		section(hideWhenEmpty: true, "Select your LutronPi Server") {
+		section(hideWhenEmpty: false, "Select your LutronPi Server") {
 			input "selectedLPi", "enum", required:true, title:"Select LutronPi Server \n(${lutronPiSelectList.size() ?: 0} found)", multiple:false,
 			      options:lutronPiSelectList, image: "http://i65.tinypic.com/nq8shi.png"
 		}
@@ -438,7 +447,7 @@ private subscribeLutronPi() {
 			getAllChildDevices().each { d -> d.refresh() }
 		}
 		else {
-			allLutronPiMap[k].remove
+			allLutronPiMap.remove(k)
 		}
 	}
 }
