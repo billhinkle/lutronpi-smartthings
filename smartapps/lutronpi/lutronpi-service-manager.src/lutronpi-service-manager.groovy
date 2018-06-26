@@ -30,7 +30,7 @@
  *												Added update notification subsystem via bridge device/scene config hash from Lutron Pi polling
  *												Added support for ST app virtual Pico buttons to trigger Lutron pico functions directly, and loop back to trigger ST actions
  *												Added support for ST app Lutron scene trigger to loop back and trigger ST actions as well
- *		06/11/2018		Version:2.0-20180615	tweaked LutronPi discovery to improve handling of multiple servers - wjh
+ *		06/11/2018		Version:2.0-20180625	tweaked LutronPi discovery & subscription to improve handling of multiple servers - wjh
  *		
  *  Copyright 2017 Nate Schwartz
  *	Copyright 2018 William Hinkle (github: billhinkle) for Contributions noted wjh, which are assigned as Contributions to Licensor per Apache License Version 2.0
@@ -441,14 +441,18 @@ def ssdpHandler(evt) {
 private subscribeLutronPi() {
 	log.debug "Subscribing to the LutronPi server " + selectedLPi
 	def allLutronPiMap = lutronPiMap
+    def deleteLPiList = []
 	allLutronPiMap.each { k, v ->
 		if (k == selectedLPi) {
 			sendToLutronPi('PUT','/subscribe', [Hub: "${ HubAddress()}"], lutronPiHandler)
 			getAllChildDevices().each { d -> d.refresh() }
 		}
 		else {
-			allLutronPiMap.remove(k)
+			deleteLPiList << k
 		}
+	}
+	deleteLPiList.each { k ->
+		allLutronPiMap.remove(k)
 	}
 }
 
