@@ -31,6 +31,7 @@
  *												Added support for ST app virtual Pico buttons to trigger Lutron pico functions directly, and loop back to trigger ST actions
  *												Added support for ST app Lutron scene trigger to loop back and trigger ST actions as well
  *		06/11/2018		Version:2.0-20180625	tweaked LutronPi discovery & subscription to improve handling of multiple servers - wjh
+ *		07/06/2018		Version:2.0-20180706	tweaked LutronPi offline/online detection & polling to cover some edge cases; added 'online' notifications - wjh
  *		
  *  Copyright 2017 Nate Schwartz
  *	Copyright 2018 William Hinkle (github: billhinkle) for Contributions noted wjh, which are assigned as Contributions to Licensor per Apache License Version 2.0
@@ -355,8 +356,10 @@ void ssdpSchedule() {
 }
 
 void ssdpOfflineDetect(data) {
+	log.debug "Detected possibly offline LutronPi $selectedLPi at ${now()}"
 	if ( selectedLPi ) {
 		def aLutronPi = lutronPiMap[selectedLPi]
+		log.debug "Selected LutronPi $selectedLPi : $aLutronPi"
 		if (aLutronPi?.ssdpPath) {	// was online, but now perhaps is not
 			if (state.ssdpSubscribed == 'SEARCH') {	// give it one more try
 				state.ssdpSubscribed = 'RETRY'
@@ -365,10 +368,10 @@ void ssdpOfflineDetect(data) {
 			} else
 				state.ssdpSubscribed = 'NOREPLY'
 			aLutronPi.ssdpPath = ''		// ensure we notice when it comes back up
-			if (notifyOnBridgeUpdate) {
-				log.info "Notification: LutronPi server is offline"
-				userNotification("LutronPi server is offline")
-			}
+//			if (notifyOnBridgeUpdate) {
+//				log.info "Notification: LutronPi server is offline"
+//				userNotification("LutronPi server is offline")
+//			}
 			def aChildDevice = getChildDevice(selectedLPi)
 			if (aChildDevice)
 				aChildDevice.sync('','')	// selected LutronPi server offline
@@ -404,10 +407,10 @@ def ssdpHandler(evt) {
 		parsedEvent << ["port":convertHexToInt(parsedEvent.deviceAddress)]
 
 		def allLutronPiMap = lutronPiMap
-		if (!(allLutronPiMap."${parsedEvent.mac}")) { //if the discovered LutronPi isn't already mapped, map it now
+		def aLutronPi = allLutronPiMap."${parsedEvent.mac}"
+		if (!aLutronPi) { //if the discovered LutronPi isn't already mapped, map it now
 			allLutronPiMap << ["${parsedEvent.mac}":parsedEvent]
 		} else { // just update the values
-			def aLutronPi = allLutronPiMap."${parsedEvent.mac}"
 			def aChildDevice = getChildDevice(parsedEvent.mac)
 			aLutronPi.timestamp = parsedEvent.timestamp
 			if (aLutronPi.ip != parsedEvent.ip || aLutronPi.port != parsedEvent.port || aLutronPi.ssdpPath != parsedEvent.ssdpPath) {
@@ -428,8 +431,8 @@ def ssdpHandler(evt) {
 							subscribeLutronPi()	// re-subscribe to the server if it no longer indicates we're subscribed
 							ssdpSchedule		// restart the discovery schedule from now
 						}
-						else
-							pollLutronPi()	// do another server summary poll every time SSDP sees the selected LutronPi server (since ST polling is flaky)
+						else	// do another server summary poll every time SSDP sees the selected LutronPi server (since ST polling is flaky)
+							runIn(5, "pollLutronPi") // runIn the poll request to consolidate multiple fast SSDP responses from selected server
 				}
 			}
 		}
@@ -464,7 +467,10 @@ private unsubscribeLutronPi() {
 
 def pollLutronPi() {
 	log.debug "Polling the LutronPi server " + selectedLPi
-
+	def aChildDevice = getChildDevice(selectedLPi)
+	if (aChildDevice) {	// should really only have to do this once on child device creation, but this handles app update cases
+		subscribe(aChildDevice, "commStatus", lutronPiCommStatusHandler)
+	}
 	sendToLutronPi('GET','/poll', [:], lutronPiHandler)
 }
 
@@ -477,16 +483,20 @@ def pollLutronPi() {
  */
 def lutronPiPollResponse(jsonMsgBody) {
 //	log.debug "got a LutronPi server summary poll: " + jsonMsgBody
-	if (!getChildDevice(selectedLPi))
+	def aChildDevice = getChildDevice(selectedLPi)
+	if (!aChildDevice)
 		return;		// this server's corresponding child device hasn't been created yet, so skip this update
+	def aLutronPi = lutronPiMap[selectedLPi]
+	if (aChildDevice.currentValue('commStatus') != 'ONLINE') {
+			aChildDevice.sync(aLutronPi?.ip, aLutronPi?.port)
+	}
 	def bridgeMap = jsonMsgBody?.Bridges;
 	if (bridgeMap != null && (bridgeMap.size() > 0)) {
 		log.debug "LutronPi [${jsonMsgBody.Version}] bridge summary: " + bridgeMap
-		getChildDevice(selectedLPi).bridgeUpdate(jsonMsgBody)
+		aChildDevice.bridgeUpdate(jsonMsgBody)
 		def bridgeUpdatedList = []
 		def bridgeGoneOfflineList = []
 		// acquire & save the server's bridge info, including a hash to compare for indication of Lutron update
-		def aLutronPi = lutronPiMap[selectedLPi]
 		if (aLutronPi?.poll) {	// compare this poll to previous poll, if any
 			bridgeMap.each { b, p ->
 				def prevBridgePoll = aLutronPi.poll?.bridges[b]
@@ -730,6 +740,13 @@ String lutronPiLabel(dispIP = null, dispPort = null) {
 	'LutronPi Server'
 }
 
+def lutronPiCommStatusHandler(evt) {
+	if (notifyOnBridgeUpdate && evt.isStateChange) {
+		log.info "Notification: LutronPi server is ${evt.value.toLowerCase()}"
+		userNotification("LutronPi server is ${evt.value.toLowerCase()}")
+	}
+}
+
 def addLutronPi() {
 	def dni = selectedLPi
 	def aLutronPi = lutronPiMap[selectedLPi]
@@ -740,7 +757,6 @@ def addLutronPi() {
 
 	// Check if child already exists
 	def aChildDevice = getChildDevice(selectedLPi)
-
 	// Add the LutronPi if new - otherwise the SSDP handler will deal with IP:Port and Path changes, if any
 	if (!aChildDevice) {
 		def aLutronPiLabel = lutronPiLabel(aLutronPi.ip, aLutronPi.port)
