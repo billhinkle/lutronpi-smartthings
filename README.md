@@ -5,7 +5,7 @@ LutronPi 2.x Server is derived from Nate Schwartz' LutronPro 1.x package for Nod
 Due to essential divergences, LutronPi 2.x Service Manager and Device Handlers for SmartThings (namespace: `lutronpi`) are _not backwards compatible_ with Nate's earlier work, and will work _only_ with the corresponding LutronPi 2.x Server running on a separate Node.js platform on the local network.
 
 ### FUNCTION:
-The LutronPi application serves to connect Lutron lighting bridges (SmartBridge, SmartBridge Pro, RA2/Select repeater) to a local hub of the Samsung SmartThings home authomation platform. There is an 'official' Lutron-to-SmartThings integration, which unfortunately does not integrate the Lutron Pico remote button fobs into SmartThings. LutronPi _does_ connect the Pico buttons to SmartThings, so long as the Picos are paired to a Lutron SmartBridge Pro or RA2/Select repeater (not to a standard retail SmartBridge).
+The LutronPi application serves to connect Lutron lighting bridges (SmartBridge, SmartBridge Pro, RA2/Select repeater) to a local hub of the Samsung SmartThings home automation platform. There is an 'official' Lutron-to-SmartThings integration, which unfortunately does not integrate the Lutron Pico remote button fobs into SmartThings. LutronPi _does_ connect the Pico buttons to SmartThings, so long as the Picos are paired to a Lutron SmartBridge Pro or RA2/Select repeater (not to a standard retail SmartBridge).
 
 ### FORM:
 The LutronPi application comprises two elements:  
