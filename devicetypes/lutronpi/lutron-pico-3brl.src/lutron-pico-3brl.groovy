@@ -21,6 +21,7 @@
  *										Added main screen favorite button for Pico, selectable in preferences
  *										Added Lutron info tile (ID, Room)
  *										Added rename reporting to parent
+ *	v2.0.0.01	2018-10-05	wjh			Added a favorite button tile; tweaked Lutron info footer
  */
 metadata {
 	definition (name: "Lutron Pico 3BRL", namespace: "lutronpi", author: "Bill Hinkle")  {
@@ -124,9 +125,13 @@ metadata {
 		valueTile("lInfo", "lutronInfo", width: 5, height: 1, decoration: "flat") {
 			state "lutronInfo", label: '${currentValue}', backgroundColor: "ffffff"
 		}
+		standardTile("favorite", "favorite", width: 1, height: 1) {
+			state "favorite", label: 'FAVE:[${currentValue}]', defaultState: true, nextState: "><", action: "pushFavorite", icon: "st.samsung.da.oven_ic_most_used"
+			state "0", label: '', icon: ""
+		}
 
 		main "mainfavorite"
-		details(["btn1", "picoIcon", "btn4", "btn3", "btn5", "holdKey", "btn2", "holdLockKey", "lInfo"])
+		details(["btn1", "picoIcon", "btn4", "btn3", "btn5", "holdKey", "btn2", "holdLockKey", "lInfo", "favorite"])
 	}
     
     preferences {
@@ -393,7 +398,8 @@ def initialize() {
 
     refresh()	// refresh parent with current button modes
 
-	sendEvent (name: "lutronInfo", value: "Lutron ${device.deviceNetworkId.tokenize('.')[0]} devID:${device.getDataValue('lipID')}\n[${device.getDataValue('lRoom')}]")
+	def lInfoText = "Lutron ${device.deviceNetworkId.tokenize('.')[0]} devID:${device.getDataValue('lipID')}" + (lRoom?"\n[$lRoom]":'')
+	sendEvent (name: "lutronInfo", value: lInfoText)
 
 	// update the device tiles for current button modes
     sendEvent(name: "holdLock", value: false)
