@@ -1,5 +1,5 @@
 /**
- *	Lutron Switch Device Type
+ *	Lutron Shade Device Type
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -12,18 +12,29 @@
  *
  *  Based on SmartThings "Lutron Virtual Dimmer" by Nate Schwartz
  *		/ contributions marked wjh by Bill Hinkle (github: billhinkle) 2018
- *	v2.0.0.00	2018-05-10	wjh	Initial version: modified dimmer to switch, added Lutron device info
- *										Added rename reporting to parent
+ *	v2.0.0.00	2018-05-10	wjh	Initial version: adapted to shades, 
+ *												 converted to multiattribute tile UI, added Lutron device info, added fade commands and ramp timing
+ *												 Added rename reporting to parent
  *	v2.0.0.01	2018-10-05	wjh	tweaked Lutron info footer
  */
  metadata {
-        definition (name: "Lutron Switch", namespace: "lutronpi", author: "Bill Hinkle") {
+        definition (name: "Lutron Shade", namespace: "lutronpi", author: "Bill Hinkle") {
 		capability "Actuator"
-        capability "Sensor"
+		capability "Sensor"
 		capability "Switch"
-        capability "Refresh"
+		capability "Refresh"
+		capability "Window Shade"	// attributes: windowShade = enum: closed/closing/open/opening/partially open/unknown
+        							// commands: close(), open(), presetPosition()
 
-        attribute "lutronInfo", "string"
+		command "fullOpen"
+		command "levelUp"
+		command "levelDown"
+		command "levelStop"
+
+		attribute "shadeControl", "enum", ["off", "on", "\u25BC", "\u25B2", "\u25BD","\u25B3"]	// "▼", "▲", "▽", "△"
+        attribute "position", "number"
+		attribute "moving", "number"
+		attribute "lutronInfo", "string"
     }
 
 	// simulator metadata
@@ -32,23 +43,35 @@
 
 	// UI tile definitions
     tiles(scale: 2) {
-        multiAttributeTile(name:"switch", type: "generic", width: 6, height: 4, canChangeIcon: true, canChangeBackground: true){
-			tileAttribute ("device.switch", key: "PRIMARY_CONTROL") {
-				attributeState "on", label:'${name}', action:"switch.off", icon:"st.switches.switch.on", backgroundColor:"#00a0dc", nextState:"\u25BC" //"▼"
-				attributeState "off", label:'${name}', action:"switch.on", icon:"st.switches.switch.off", backgroundColor:"#ffffff", nextState:"\u25B2" //"▲"
-				attributeState "\u25B2", label:'${name}', action:"switch.off", icon:"st.switches.switch.on", backgroundColor:"#00a0dc", nextState:"\u25BC" //"▼"
-				attributeState "\u25BC", label:'${name}', action:"switch.on", icon:"st.switches.switch.off", backgroundColor:"#ffffff", nextState:"\u25B2" //"▲"
+        multiAttributeTile(name:"shade", type: "generic", width: 6, height: 4, canChangeIcon: true, canChangeBackground: true){
+            tileAttribute ("shadeControl", key: "PRIMARY_CONTROL") {
+                attributeState "up", label:'${name}', action:"window shade.close", icon:"http://oi66.tinypic.com/2h7la13.jpg", backgroundColor:"#a1c1f1", nextState:"\u25BC"	//"▼"
+                attributeState "down", label:'${name}', action:"window shade.open", icon:"http://oi65.tinypic.com/i5dg5s.jpg", backgroundColor:"#cccccc", nextState:"\u25B2"	//"▲"
+                attributeState "\u25B2", label:'${name}', action:"levelStop", icon:"st.custom.buttons.add-icon", backgroundColor:"#83abe6"	// "▲"
+                attributeState "\u25BC", label:'${name}', action:"levelStop", icon:"st.custom.buttons.subtract-icon", backgroundColor:"#bbbbbb"	// "▼"
+				attributeState "\u25B3", label:'STOP ${name}', action:"levelStop", icon:"st.custom.buttons.add-icon", backgroundColor:"#7193c6"	// "△"
+				attributeState "\u25BD", label:'STOP ${name}', action:"levelStop", icon:"st.custom.buttons.subtract-icon", backgroundColor:"#999999"	// "▽"
             }
+			tileAttribute("shadeControl", key: "SECONDARY_CONTROL") {
+				attributeState "default", label: '', action: "fullOpen", icon:"st.Weather.weather14"
+			}
+            tileAttribute ("position", key: "SLIDER_CONTROL") {
+                attributeState "position", label: 'Position', action:"window shade.presetPosition"
+            }
+			tileAttribute("moving", key: "VALUE_CONTROL") {
+				attributeState "VALUE_UP", action: "levelUp"
+				attributeState "VALUE_DOWN", action: "levelDown"
+			}
 		}
-		standardTile("switchRefresh", "device.refresh", width: 1, height: 1, decoration: "flat") {
+		standardTile("shadeRefresh", "device.refresh", width: 1, height: 1, decoration: "flat") {
 			state "default", label: '', icon:"st.secondary.refresh", action: "refresh.refresh"
 		}
 		valueTile("lInfo", "lutronInfo", width: 5, height: 1, decoration: "flat") {
 			state "lutronInfo", label: '${currentValue}', backgroundColor: "#ffffff"
 		}
 
-		main "switch"
-        details(["switch", "lInfo", "switchRefresh"])
+		main "shade"
+        details(["shade", "lInfo", "shadeRefresh"])
     }
 }
 
@@ -60,33 +83,96 @@ def parse(description) {
 
     if (description.name == 'level') {
 		def level = description.value?:0 as Integer
-		sendEvent(name: 'switch', value: ((level > 0)?'on':'off'))
+		if (level > 0) {
+        	if (level > 100)
+            	level = 100
+	    	sendEvent(name: 'position', value: level)
+            sendEvent(name: 'switch', value: 'on')
+			sendEvent(name: 'windowShade', value: (level == 100)?'open':'partially open')
+            sendEvent(name: 'shadeControl', value: 'up')
+		} else {
+            sendEvent(name: 'switch', value: 'off')
+			sendEvent(name: 'windowShade', value: 'closed')
+            sendEvent(name: "shadeControl", value: 'down')
+		}
+		if (state.moving)
+			levelStop()
 	}
 }
 
-def on() {
+def fullOpen() {
 	parent.on(this)
-//	wait for Lutron to update this state, to avoid race
-//	sendEvent(name: "switch", value: "on")
-	log.info "Switch ${device.label} On"
+//	depend on the Lutron's response to update this state, to avoid races
+//	sendEvent(name: 'windowShade', value: 'open')
+	sendEvent(name: 'shadeControl', value: '\u25B2')	// "▲"
+	log.info "Shade ${device.label} Opening (full)"
 }
 
-def off() {
+def open() {
+	def level = device.currentValue("position")
+    if (level <= 0)
+    	level = 100;
+	parent.setLevel(this, level)
+//	depend on the Lutron's response to update these states, to avoid races
+//	sendEvent(name: 'windowShade', value: 'open')
+//	sendEvent(name: 'shadeControl', value: 'up')
+	log.info "Shade ${device.label} Opening to: ${level}%"
+}
+
+def close() {
 	parent.off(this)
-//	wait for Lutron to update this state, to avoid race
-//	sendEvent(name: "switch", value: "off")
-	log.info "Switch ${device.label} Off"
+//	depend on the Lutron's response to update these states, to avoid races
+//	sendEvent(name: 'windowShade', value: 'closed')
+//	sendEvent(name: 'shadeControl', value: 'down')
+	log.info "Shade ${device.label} Closing"
 }
 
+def presetPosition(level) {
+ 	if (level < 0) level = 0
+	else if( level > 100) level = 100
+
+    log.info "Shade ${device.label} presetPosition: ${level}%"
+    parent.setLevel(this, level)
+    sendEvent(name: 'position', value: level)
+}
+
+def levelUp() {
+	if (state.moving) {
+    	levelStop()
+	} else {
+		state.moving = true;
+		parent.fadeLevel(this, "raise")
+	   	sendEvent(name: 'shadeControl', value: '\u25B3')	// '△'
+	}
+//	setLevel(device.currentValue('level') + 5);
+}
+
+def levelDown() {
+	if (state.moving) {
+    	levelStop()
+	} else {
+		state.moving = true;
+		parent.fadeLevel(this, "lower")
+	   	sendEvent(name: 'shadeControl', value: '\u25BD')	// '▽'
+    }
+//	setLevel(device.currentValue('level') - 5);
+}
+
+def levelStop() {
+	state.moving = false;
+	parent.fadeLevel(this, "stop")
+//	depend on the Lutron's response to update this state, to avoid races
+//   	sendEvent(name: 'shadeControl', value: ((currentWindowShade == 'open')?'up':'down'))
+}
 
 def refresh() {
-	log.info "Switch ${device.label} refresh"
+	log.info "Shade ${device.label} refresh"
     parent.refresh(this)
 }
 
 def installed() {
 	state.label = device.label
-    log.info "Switch ${device.label} installed" 
+    log.info "Shade ${device.label} installed" 
 	initialize()
 }
 
@@ -96,14 +182,16 @@ def updated() {
 
 def initialize() {
     if (state.label != device.label) {
-    	log.info "Switch ${state.label} renamed to ${device.label}"
+    	log.info "Shade ${state.label} renamed to ${device.label}"
 		state.label = device.label
 		parent.renameChildDevice(this, device.label);
-   }
+    }
+    levelStop()
 
 	refresh()
-    
+
 	def lRoom = device.getDataValue('lRoom')
 	def lInfoText = "Lutron ${device.deviceNetworkId.tokenize('.')[0]} devID:${device.getDataValue('lipID')} Zone:${device.getDataValue("zone")}" + (lRoom?"\n[$lRoom]":'')
 	sendEvent (name: "lutronInfo", value: lInfoText)
+
 }
