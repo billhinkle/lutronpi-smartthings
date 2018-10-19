@@ -35,6 +35,7 @@
  *		10/05/2018		Version:2.0-20181005	Added support for manually adding/removing devices for bridges that do not enumerate their own device list
  *												Corrected a bug with deletion of phantom shades and Picos
  *												Cleaned up deletion of inactive child devices
+ *		10/18/2018		Version:2.0-20181018	No longer attempts to add child devices if the LutronPi Bridge Server device doesn't exist/can't be created
  *		
  *  Copyright 2017 Nate Schwartz
  *	Copyright 2018 William Hinkle (github: billhinkle) for Contributions noted wjh, which are assigned as Contributions to Licensor per Apache License Version 2.0
@@ -1013,11 +1014,12 @@ def initialize() {
 
 	// If a LutronPi server was actually selected add the child devices
 	if (selectedLPi) {
-		addLutronPi()
-		addDevices('switches')
-		addDevices('shades')
-		addPicos()
-		addScenes()
+		if (addLutronPi()) {
+			addDevices('switches')
+			addDevices('shades')
+			addPicos()
+			addScenes()
+		}
 	}
 
 	ssdpSubscribe()
@@ -1046,7 +1048,7 @@ def lutronPiCommStatusHandler(evt) {
 	}
 }
 
-def addLutronPi() {
+Boolean addLutronPi() {	// return success=true or failure=false
 	def stDNI = selectedLPi
 	def aLutronPi = lutronPiMap[selectedLPi]
 
@@ -1073,10 +1075,13 @@ def addLutronPi() {
 								]
 			])
 			pollLutronPi()	// do an initial server summary poll; let the SSDP handler take it from here
+            return true
 		} catch (e) {
-			log.warn "Unable to add LutronPi device as ${deviceSpec.nameSpace}:${deviceSpec.deviceType} with DNI $stDNI [ERR=$e]"
+			log.error "Unable to add LutronPi device as ${deviceSpec.nameSpace}:${deviceSpec.deviceType} with DNI $stDNI [ERR=$e]"
+            return false
 		}
 	}
+    return true
 }
 
 def addDevices(String devgroup) {
@@ -1154,7 +1159,7 @@ def addDevices(String devgroup) {
 						'data': deviceData
 					])
 				} catch (e) {
-					log.warn "Unable to add $dName as ${deviceSpec.nameSpace}:${deviceSpec.deviceType} with DNI $stDNI [ERR=$e]"
+					log.error "Unable to add $dName as ${deviceSpec.nameSpace}:${deviceSpec.deviceType} with DNI $stDNI [ERR=$e]"
 				}
 			}
 		}
@@ -1238,7 +1243,7 @@ def addPicos() {
 							'data': deviceData
 					])
 				} catch (e) {
-					log.warn "Unable to add $dName as ${deviceSpec.nameSpace}:${deviceSpec.deviceType} with DNI $stDNI [ERR=$e]"
+					log.error "Unable to add $dName as ${deviceSpec.nameSpace}:${deviceSpec.deviceType} with DNI $stDNI [ERR=$e]"
 				}
 			}
 		}
@@ -1290,7 +1295,7 @@ def addScenes() {
 				])
 				// no initial refresh required since we cannot keep track of Lutron scene status
 			} catch (e) {
-				log.warn "Unable to add scene $dName as ${deviceSpec.nameSpace}:${deviceSpec.deviceType} with DNI $stDNI [ERR=$e]"
+				log.error "Unable to add scene $dName as ${deviceSpec.nameSpace}:${deviceSpec.deviceType} with DNI $stDNI [ERR=$e]"
 			}
 		}
 	}
