@@ -278,7 +278,7 @@ def sceneDiscovery() {
 		selectorFlag.initScene = false;
 
 	return dynamicPage(name:"sceneDiscovery", title:"Scene Discovery", nextPage:"", refreshInterval: refreshInterval, install: true, uninstall: false) {
-		section(hideWhenEmpty: true, "Select Scenes/Virtual Buttons (${(selectedScenes?.size()?:0) - (scenePhantoms?.size()?:0)} of ${sceneOptions?.size()?:0} found)") {
+		section(hideWhenEmpty: true, "Select Scenes/Phantom Buttons (${(selectedScenes?.size()?:0) - (scenePhantoms?.size()?:0)} of ${sceneOptions?.size()?:0} found)") {
 			input "selectedScenes", "enum", required: false, submitOnChange: true, title: "",
 			      multiple: true, options: sceneOptions,image: "http://oi65.tinypic.com/znwu9i.jpg"
 		}
@@ -287,7 +287,7 @@ def sceneDiscovery() {
             	app.updateSetting("sceneBuilderBridge", null)
                 app.updateSetting("sceneBuilderID", [type:"number", value: "0"])
                 app.updateSetting("sceneBuilderName", [type:"text", value: ''])
-				href name:"sceneBuilderPage", title: "Add a Scene/Virtual Button", description: "tap to specify",
+				href name:"sceneBuilderPage", title: "Add a Scene/Phantom Button", description: "tap to specify",
                      required: false, page: "sceneBuilder", image: "st.custom.buttons.add-icon"
 			}
             if (scenesBuiltButUnselected.size()) {
@@ -295,7 +295,7 @@ def sceneDiscovery() {
 				def sceneRemovalCandidates = [:]
 				scenesBuiltButUnselected.each { k, v -> sceneRemovalCandidates[k] = "${v.name} (${v.dni})" }
 
-				input "scenesToRemove", "enum", required:false, submitOnChange:true, title:"Remove scenes/virtual buttons",
+				input "scenesToRemove", "enum", required:false, submitOnChange:true, title:"Remove Added Scenes/Phantom Buttons",
                       description: "from ${scenesBuiltButUnselected.size()} currently unselected",
 				      multiple:true, options: sceneRemovalCandidates, image: "st.custom.buttons.subtract-icon"
             }
@@ -392,13 +392,13 @@ private deviceRemoverConfirm() {
 private sceneBuilder() {
 	def bridgesEligible = bridgeDevicesEnumerated().findAll({ k,v -> !v }).keySet() as List 	// eligible bridge only if it doesn't enumerate/list its devices
 
-	return dynamicPage(name: "sceneBuilder", title: "Scene / Virtual Button Builder", nextPage: "sceneBuilderValidate", uninstall: false) {
+	return dynamicPage(name: "sceneBuilder", title: "Scene / Phantom Button Builder", nextPage: "sceneBuilderValidate", uninstall: false) {
 		section {
 			input "sceneBuilderBridge", "enum", required:true, submitOnChange: false, title: "Bridge:",
 			      multiple: false, options: bridgesEligible
-			input "sceneBuilderID", "number", required:true, submitOnChange: false, title: "Scene/Virtual Button #",
+			input "sceneBuilderID", "number", required:true, submitOnChange: false, title: "Scene/Phantom Button #",
 			      multiple: false, range: "1..*", defaultValue: 1
-			input "sceneBuilderName", "text", required: true, submitOnChange: false, title: "Scene/Virtual Button Name:",
+			input "sceneBuilderName", "text", required: true, submitOnChange: false, title: "Scene/Phantom Button Name:",
 			      multiple: false
 		}
     }
@@ -407,7 +407,7 @@ private sceneBuilder() {
 private sceneBuilderValidate() {
 	def pageProperties = [
 		name: "sceneBuilderValidate",
-		title: "Scene / Virtual Button Builder",
+		title: "Scene / Phantom Button Builder",
    	]
 	if (sceneBuilderBridge && sceneBuilderID && sceneBuilderName &&
         !scenesDiscovered().any { k,v -> (bridgeOfDNI(k) == sceneBuilderBridge) &&
@@ -419,9 +419,9 @@ private sceneBuilderValidate() {
 
 		return dynamicPage(pageProperties) {
    			section {
-   				paragraph "Added Scene/Virtual Button:\nBridge: $sceneBuilderBridge\nScene/Virtual Button # $sceneBuilderID\nName: $sceneBuilderName"
+   				paragraph "Added Scene/Phantom Button:\nBridge: $sceneBuilderBridge\nScene/Phantom Button # $sceneBuilderID\nName: $sceneBuilderName"
 				paragraph "Tap 'Done', or 'Back' to add another."
-				paragraph "Select added Scenes/Virtual Buttons on the next page to use them now."
+				paragraph "Select added Scenes/Phantom Buttons on the next page to use them now."
 			}
 		}
 	} else {
@@ -429,7 +429,7 @@ private sceneBuilderValidate() {
 
    		return dynamicPage(pageProperties) {
    			section {
-   				paragraph "Cannot add this Scene/Virtual Button for Bridge: $sceneBuilderBridge; # $sceneBuilderID may already exist.\n\nTap 'Done' to correct the specification."
+   				paragraph "Cannot add this Scene/Phantom Button for Bridge: $sceneBuilderBridge; # $sceneBuilderID may already exist.\n\nTap 'Done' to correct the specification."
        		}
 		}
 	}
@@ -438,7 +438,7 @@ private sceneBuilderValidate() {
 private sceneRemoverConfirm() {
 	def pageProperties = [
 		name: "sceneRemoverConfirm",
-		title: "Scene / Virtual Button Removal",
+		title: "Scene / Phantom Button Removal",
 		nextPage: "sceneDiscovery"
    	]
     def srCount = "No"
@@ -449,7 +449,7 @@ private sceneRemoverConfirm() {
     app.updateSetting("scenesToRemove", [])
 	return dynamicPage(pageProperties) {
 		section {
-			paragraph srCount + " scene${(srCount!='1')?'s':' '}/virtual button${(srCount!='1')?'s were':' was'} removed.\n\nTap 'Save'."
+			paragraph srCount + " scene${(srCount!='1')?'s':' '}/phantom button${(srCount!='1')?'s were':' was'} removed.\n\nTap 'Save'."
 		}
 	}
 }
