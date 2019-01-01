@@ -159,7 +159,7 @@ def optionsSelect() {
 //	log.debug "Made it to optionsSelect()"
 	return dynamicPage(name:"optionsSelect", title:"LutronPi Options", nextPage:"deviceDiscovery", uninstall: true) {
 		section() {
-			input "notifyOnBridgeUpdate", "bool", title:"Notify of bridge updates", defaultValue:false, required:true
+			input "notifyOnBridgeUpdate", "bool", title:"Notify on updates/offline", defaultValue:false, required:true
 			input "lRoomDeviceNames", "bool", title:"Lutron room:switch names", defaultValue:false, required:true
 			input "lockSTDeviceNames", "bool", title:"App device renames locked", defaultValue:true, required:true
 		}
