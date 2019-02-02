@@ -32,7 +32,7 @@ The LutronPi application comprises two elements:
   7. Select the listed `lutronpi-service-manager.groovy` file, check the `Publish` check box at bottom right and then click the `Execute Update` button.
   8. The `lutronpi: LutronPi Service Manager` SmartApp should now appear in your SmartApps list as "published".
   9. Click on the `My Device Handlers` tab and repeat steps #4 through #6 to access the Github repository.
-  10. Select all of the 10 listed `lutron-*` files, check the `Publish` check box at bottom right and then click the `Execute Update` button.
+  10. Select all of the 11 listed `lutron-*` files, check the `Publish` check box at bottom right and then click the `Execute Update` button.
   11. Those `lutronpi: Lutron *` device handlers should now appear in your Device Handlers list as "published".
   
   ALTERNATIVELY: You can also manually create the SmartApp and Device Handlers, without Github integration.
@@ -45,7 +45,7 @@ The LutronPi application comprises two elements:
   1. Turning now to your SmartThings phone/tablet app, select the `Automation` icon (a little house with checkmark)
   2. Select the `SmartApps` tab and then `+ Add a SmartApp`.
   3. Scroll to the bottom of that screen and select `My Apps`
-  4. Find the **Lutron Pi Service Manager** and select it.
+  4. Find the **LutronPi Service Manager** and select it.
   5. The Service Manager will begin its configuration, through several successive screens.
   6. Subsequently, the **LutronPi Service Manager** will appear in your SmartApps list, and can be selected there.
 
@@ -92,7 +92,4 @@ Beyond the original LutronPro 1.x package and its support of Lutron dimmers, swi
    * lutron-shade device handler: all new function for Lutron shades
    * lutron-shade device handler: new graphics and tile button layout with responsive icons
    * lutron-switch device handler: native Lutron device information displayed for reference
-   
-
-   
-   
+   * lutron-keypad device handler: limited support for non-Pico Lutron keypads (using the Telnet interface)

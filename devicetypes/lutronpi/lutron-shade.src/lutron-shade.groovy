@@ -15,6 +15,7 @@
  *	v2.0.0.00	2018-05-10	wjh	Initial version: adapted to shades, 
  *												 converted to multiattribute tile UI, added Lutron device info, added fade commands and ramp timing
  *												 Added rename reporting to parent
+ *	v2.0.0.01	2018-10-05	wjh	tweaked Lutron info footer
  */
  metadata {
         definition (name: "Lutron Shade", namespace: "lutronpi", author: "Bill Hinkle") {
@@ -188,7 +189,9 @@ def initialize() {
     levelStop()
 
 	refresh()
-    
-	sendEvent (name: "lutronInfo", value: "Lutron ${device.deviceNetworkId.tokenize('.')[0]} devID:${device.getDataValue('lipID')} Zone:${device.getDataValue("zone")}\n[${device.getDataValue('lRoom')}]")
+
+	def lRoom = device.getDataValue('lRoom')
+	def lInfoText = "Lutron ${device.deviceNetworkId.tokenize('.')[0]} devID:${device.getDataValue('lipID')} Zone:${device.getDataValue("zone")}" + (lRoom?"\n[$lRoom]":'')
+	sendEvent (name: "lutronInfo", value: lInfoText)
 
 }

@@ -16,6 +16,7 @@
  *													Added direct fade commands and fade (ramp) enable and timing for on & off
  *													Added 100%-on button, moved refresh out of the way
  *												 	Added rename reporting to parent
+ *	v2.0.0.01	2018-10-05	wjh	changed full-on button icon; tweaked Lutron info footer
  */
  metadata {
         definition (name: "Lutron Dimmer", namespace: "lutronpi", author: "Bill Hinkle") {
@@ -63,7 +64,7 @@
 				attributeState "\u25BD", label:'STOP ${name}', action: "levelStop", icon:"st.switches.light.off", backgroundColor:"#00007f" //"▽"
             }
 			tileAttribute("fullBright", key: "SECONDARY_CONTROL") {
-				attributeState "default", label: '', action: "fullOn", icon:"st.Weather.weather14"
+				attributeState "fullBright", label: '', action: "fullOn", icon:"st.custom.wuk.sunny"	// "st.Weather.weather14"
 			}
             tileAttribute ("device.level", key: "SLIDER_CONTROL") {
                 attributeState "level", label: 'Brightness', action: "setLevelUser" //"switch level.setLevel"
@@ -273,6 +274,8 @@ def initialize() {
 
 	refresh()
     
-	sendEvent (name: "lutronInfo", value: "Lutron ${device.deviceNetworkId.tokenize('.')[0]} devID:${device.getDataValue('lipID')} Zone:${device.getDataValue("zone")}\n[${device.getDataValue('lRoom')}]")
+	def lRoom = device.getDataValue('lRoom')
+	def lInfoText = "Lutron ${device.deviceNetworkId.tokenize('.')[0]} devID:${device.getDataValue('lipID')} Zone:${device.getDataValue("zone")}" + (lRoom?"\n[$lRoom]":'')
+	sendEvent (name: "lutronInfo", value: lInfoText)
 
 }

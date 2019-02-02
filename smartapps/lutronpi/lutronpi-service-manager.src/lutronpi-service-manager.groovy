@@ -32,6 +32,11 @@
  *												Added support for ST app Lutron scene trigger to loop back and trigger ST actions as well
  *		06/11/2018		Version:2.0-20180625	tweaked LutronPi discovery & subscription to improve handling of multiple servers - wjh
  *		07/06/2018		Version:2.0-20180706	tweaked LutronPi offline/online detection & polling to cover some edge cases; added 'online' notifications - wjh
+ *		10/05/2018		Version:2.0-20181005	Added support for manually adding/removing devices for bridges that do not enumerate their own device list
+ *												Corrected a bug with deletion of phantom shades and Picos
+ *												Cleaned up deletion of inactive child devices
+ *		10/18/2018		Version:2.0-20181018	No longer attempts to add child devices if the LutronPi Bridge Server device doesn't exist/can't be created
+ *		11/23/2018		Version:2.0-20181123	Increased retries for offline detection to avoid nuisance alerts
  *		
  *  Copyright 2017 Nate Schwartz
  *	Copyright 2018 William Hinkle (github: billhinkle) for Contributions noted wjh, which are assigned as Contributions to Licensor per Apache License Version 2.0
@@ -68,7 +73,13 @@ preferences {
 	page(name:"lPiFirstSelected", title:"LutronPi Server Selected", content:"lPiFirstSelected")
 	page(name:"optionsSelect", title:"LutronPi Options", content:"optionsSelect")
 	page(name:"deviceDiscovery", title:"Lutron Device Setup", content:"deviceDiscovery")
+	page(name:"deviceBuilder", title:"Device Builder", content:"deviceBuilder")
+	page(name:"deviceBuilderValidate", title:"Device Builder Validate", content:"deviceBuilderValidate")
+	page(name:"deviceRemoverConfirm", title:"Device Remover Confirm", content:"deviceRemoverConfirm")
 	page(name:"sceneDiscovery", title:"Lutron Scene Setup", content:"sceneDiscovery")
+	page(name:"sceneBuilder", title:"Scene Builder", content:"sceneBuilder")
+	page(name:"sceneBuilderValidate", title:"Scene Builder Validate", content:"sceneBuilderValidate")
+	page(name:"sceneRemoverConfirm", title:"Scene Remover Confirm", content:"sceneRemoverConfirm")
 }
 
 // UI select flags
@@ -83,13 +94,13 @@ def mainPage() {
 //	log.debug "Made it to mainPage()"
 	// Check to see if the LutronPi Server already (and still) exists; if so, skip LutronPi discovery, else load LutronPi discovery
 	def allLutronPi = lutronPiMap
-	if (allLutronPi.containsKey(selectedLPi)) {
+	if (allLutronPi?.containsKey(selectedLPi)) {
 		if (lPiReDiscovery(lutronPiMap[selectedLPi]))
 			return lPiFirstSelected()
 	}
-	if (allLutronPi.size() > 1 || !allLutronPi.containsKey(selectedLPi)) {	// insure we get a fresh set of LutronPi discoveries
+	if (allLutronPi.size() > 1 || !allLutronPi?.containsKey(selectedLPi)) {	// insure we get a fresh set of LutronPi discoveries
 		def selLPiValue = null
-		if (allLutronPi.containsKey(selectedLPi))
+		if (allLutronPi?.containsKey(selectedLPi))
 			selLPiValue = allLutronPi[selectedLPi]
 		allLutronPi.clear()
 		if (selLPiValue)
@@ -148,7 +159,7 @@ def optionsSelect() {
 //	log.debug "Made it to optionsSelect()"
 	return dynamicPage(name:"optionsSelect", title:"LutronPi Options", nextPage:"deviceDiscovery", uninstall: true) {
 		section() {
-			input "notifyOnBridgeUpdate", "bool", title:"Notify of bridge updates", defaultValue:false, required:true
+			input "notifyOnBridgeUpdate", "bool", title:"Notify on updates/offline", defaultValue:false, required:true
 			input "lRoomDeviceNames", "bool", title:"Lutron room:switch names", defaultValue:false, required:true
 			input "lockSTDeviceNames", "bool", title:"App device renames locked", defaultValue:true, required:true
 		}
@@ -163,20 +174,28 @@ def optionsSelect() {
 def deviceDiscovery() {
 //	log.debug "Made it to deviceDiscovery()"
 	def refreshInterval = 2
-	// log.debug selectedSwitches
-	// log.debug selectedPicos
-	// log.debug selectedShades
+	// log.debug "Selected switches=$selectedSwitches"
+	// log.debug "Selected picos=$selectedPicos"
+	// log.debug "Selected shades=$selectedShades"
 
+	def bridgeDeviceEnumeration = bridgeDevicesEnumerated()
 	def switchOptions = switchesDiscovered()
 	def picoOptions = picosDiscovered()
 	def shadeOptions = shadesDiscovered()
 
-	def switchPhantoms = selectedSwitches.findAll { k-> !switchOptions[k]}
-	def picoPhantoms = selectedPicos.findAll { k-> !picoOptions[k]}
-	def shadePhantoms = selectedShades.findAll { k-> !shadeOptions[k]}
+	// if there are devices pending removal on this page refresh, do that instead of device selection, then link back to this page
+	if (devicesToRemove) {
+		return deviceRemoverConfirm()
+	}
 
+	def switchPhantoms = selectedSwitches.findAll { k-> !switchOptions[k]}
+	def shadePhantoms = selectedShades.findAll { k-> !shadeOptions[k]}
+	def picoPhantoms = selectedPicos.findAll { k-> !picoOptions[k]}
+	def devicesBuiltButUnselected = state.builtDevices.findAll { k, v -> !selectedSwitches?.contains(k) &&
+	                                                                     !selectedShades?.contains(k) &&
+	                                                                     !selectedPicos?.contains(k) }
 	// Populate the preferences page with found devices
-	discoverLutronDevices()
+	discoverBridgeDevices()
 
 	if (!selectorFlag.initSwitch) {
 		refreshInterval = 10
@@ -186,31 +205,50 @@ def deviceDiscovery() {
 	log.debug "Made it to deviceDiscovery preferences"
 	return dynamicPage(name:"deviceDiscovery", title:"Device Discovery", nextPage:"sceneDiscovery", refreshInterval: refreshInterval, uninstall: false) {
 
-		section(hideWhenEmpty: true, "Switches") {
-			input "selectedSwitches", "enum", required:false, submitOnChange:true, title:"Select Switches \n(${selectedSwitches?.size()?:0} of ${switchOptions.size()?:0} found)",
-			      multiple:true, options:switchOptions, image: "http://i63.tinypic.com/kb3jty.png"
+		section(hideWhenEmpty: true, "Select Switches & Dimmers (${(selectedSwitches?.size()?:0) - (switchPhantoms?.size()?:0)} of ${switchOptions.size()?:0} found)") {
+			input "selectedSwitches", "enum", required: false, submitOnChange: true, title: "",
+			      multiple: true, options: switchOptions, image: "http://i63.tinypic.com/kb3jty.png"
 		}
-
-		section(hideWhenEmpty: true, "Shades") {
-			input "selectedShades", "enum", required:false, submitOnChange:true, title:"Select Shades \n(${selectedShades?.size()?:0} of ${shadeOptions.size()?:0} found)",
-			      multiple:true, options:shadeOptions, image: "http://oi68.tinypic.com/2e2dk4z.jpg"
+        
+		section(hideWhenEmpty: true, "Select Shades (${(selectedShades?.size()?:0) - (shadePhantoms?.size()?:0)} of ${shadeOptions.size()?:0} found)") {
+			input "selectedShades", "enum", required: false, submitOnChange: true, title: "",
+			      multiple: true, options: shadeOptions, image: "http://oi68.tinypic.com/2e2dk4z.jpg"
 		}
  		
-		section(hideWhenEmpty: true, "Picos") {
-			input "selectedPicos", "enum", required:false, submitOnChange:true, title:"Select Picos \n(${selectedPicos?.size()?:0} of ${picoOptions.size()?:0} found)",
-			      multiple:true, options:picoOptions, image: "http://i67.tinypic.com/4hujyv.png"
-
-			paragraph "Pico buttons can only be monitored from a Lutron Caséta Pro SmartBridge or RA2 Select Repeater. Picos on a standard SmartBridge cannot control devices in SmartThings.",
+		section(hideWhenEmpty: true, "Select Picos & Keypads (${(selectedPicos?.size()?:0) - (picoPhantoms?.size()?:0)} of ${picoOptions.size()?:0} found)") {
+			input "selectedPicos", "enum", required: false, submitOnChange: true, title: "",
+			      multiple: true, options: picoOptions, image: "http://i67.tinypic.com/4hujyv.png"
+			paragraph "Pico keypads on a standard  Lutron Caséta SmartBridge cannot control devices in SmartThings.",
 					  hideWhenEmpty: "selectedPicos"
 		}
+		section(hideWhenEmpty: true) {
+			if (bridgeDeviceEnumeration.any { k,v -> !v }) {	// only offer to add devices to bridges that do not enumerate/list their devices for us
+				app.updateSetting("deviceBuilderBridge", null)	// should choose between bridges with its bridgeDeviceEnumeration value false
+				app.updateSetting("deviceBuilderType", null)	// ["Switch","Dimmer","Shade","Pico","Keypad"]
+				app.updateSetting("deviceBuilderID", [type:"text", value: ""])	// for Switch/Dimmer and Shade this is Zone
+				app.updateSetting("deviceBuilderMaxBtn", [type:"number", value: "1"])	// for Keypad only max button #
+				app.updateSetting("deviceBuilderName", [type:"text", value: ''])
+				app.updateSetting("deviceBuilderRoom", [type:"text", value: ''])
+				href name:"deviceBuilderPage", title: "Add a Device", description: "tap to specify",
+				     required: false, page: "deviceBuilder", image: "st.custom.buttons.add-icon"
+			}
+			if (devicesBuiltButUnselected.size()) {
+				app.updateSetting("devicesToRemove", [])
+				def deviceRemovalCandidates = [:]
+				devicesBuiltButUnselected.each { k, v -> deviceRemovalCandidates[k] = "${v.name} (${v.dni})" }
 
+				input "devicesToRemove", "enum", required: false, submitOnChange: true, title:"Remove Added Devices",
+				      description: "from ${devicesBuiltButUnselected.size()} currently unselected",
+				      multiple: true, options: deviceRemovalCandidates, image: "st.custom.buttons.subtract-icon"
+			}
+		}
 		section(hideWhenEmpty: true, "Deleted / Please de-select:") {
-			input "selectedSwitches", "enum", required:false, submitOnChange:true, title:"De-select phantom switches",
-			      multiple:true, options:switchPhantoms, image: "st.custom.buttons.subtract-icon"
-			input "selectedShades", "enum", required:false, submitOnChange:true, title:"De-select phantom shades",
-			      multiple:true, options:shadePhantoms, image: "st.custom.buttons.subtract-icon"
-			input "selectedPicos", "enum", required:false, submitOnChange:true, title:"De-select phantom Picos",
-			      multiple:true, options:picoPhantoms, image: "st.custom.buttons.subtract-icon"
+			input "selectedSwitches", "enum", required: false, submitOnChange: true, title: "De-select phantom switches",
+			      multiple:true, options: switchPhantoms, image: "st.custom.buttons.subtract-icon"
+			input "selectedShades", "enum", required: false, submitOnChange: true, title: "De-select phantom shades",
+			      multiple:true, options: shadePhantoms, image: "st.custom.buttons.subtract-icon"
+			input "selectedPicos", "enum", required: false, submitOnChange: true, title: "De-select phantom Picos",
+			      multiple:true, options: picoPhantoms, image: "st.custom.buttons.subtract-icon"
 		}
 	}
 }
@@ -219,14 +257,21 @@ def deviceDiscovery() {
 def sceneDiscovery() {
 //	log.debug "Made it to sceneDiscovery()"
 	def refreshInterval = 2
-	// log.debug selected Scenes
+	// log.debug selectedScenes
 
+	def bridgeDeviceEnumeration = bridgeDevicesEnumerated()
 	def sceneOptions = scenesDiscovered()
 
-	def scenePhantoms = selectedScenes.findAll { k-> !sceneOptions[k]}
+	// if there are scenes pending removal on this page refresh, do that instead of scene selection, then link back to this page
+	if (scenesToRemove) {
+		return sceneRemoverConfirm()
+	}
+
+	def scenePhantoms = selectedScenes.findAll { k-> !sceneOptions[k] }
+	def scenesBuiltButUnselected = state.builtScenes.findAll { k, v -> !selectedScenes?.contains(k) }
 
 	// Populate the preferences page with found scenes
-	discoverLutronScenes()
+	discoverBridgeScenes()
 
 	if (!selectorFlag.initScene /* sceneOptions != [:] */) {
 		refreshInterval = 10
@@ -234,11 +279,28 @@ def sceneDiscovery() {
 		selectorFlag.initScene = false;
 
 	return dynamicPage(name:"sceneDiscovery", title:"Scene Discovery", nextPage:"", refreshInterval: refreshInterval, install: true, uninstall: false) {
-		section(hideWhenEmpty: true, "Select Lutron scenes") {
-			input "selectedScenes", "enum", required:false, submitOnChange:true, title:"Select Scenes \n(${selectedScenes?.size()?:0} of ${sceneOptions?.size()?:0} found)",
-			      multiple:true, options:sceneOptions,image: "http://oi65.tinypic.com/znwu9i.jpg"
+		section(hideWhenEmpty: true, "Select Scenes/Phantom Buttons (${(selectedScenes?.size()?:0) - (scenePhantoms?.size()?:0)} of ${sceneOptions?.size()?:0} found)") {
+			input "selectedScenes", "enum", required: false, submitOnChange: true, title: "",
+			      multiple: true, options: sceneOptions,image: "http://oi65.tinypic.com/znwu9i.jpg"
 		}
+		section(hideWhenEmpty: true) {
+			if (bridgeDeviceEnumeration.any { k,v -> !v }) {	// only offer to add devices to bridges that do not enumerate/list their devices for us
+				app.updateSetting("sceneBuilderBridge", null)
+				app.updateSetting("sceneBuilderID", [type:"number", value: "0"])
+				app.updateSetting("sceneBuilderName", [type:"text", value: ''])
+				href name:"sceneBuilderPage", title: "Add a Scene/Phantom Button", description: "tap to specify",
+				     required: false, page: "sceneBuilder", image: "st.custom.buttons.add-icon"
+			}
+			if (scenesBuiltButUnselected.size()) {
+				app.updateSetting("scenesToRemove", [])
+				def sceneRemovalCandidates = [:]
+				scenesBuiltButUnselected.each { k, v -> sceneRemovalCandidates[k] = "${v.name} (${v.dni})" }
 
+				input "scenesToRemove", "enum", required:false, submitOnChange:true, title:"Remove Added Scenes/Phantom Buttons",
+				      description: "from ${scenesBuiltButUnselected.size()} currently unselected",
+				      multiple:true, options: sceneRemovalCandidates, image: "st.custom.buttons.subtract-icon"
+			}
+		}
 		section(hideWhenEmpty: true, "Deleted / Please de-select:") {
 			input "selectedScenes", "enum", required:false, submitOnChange:true, title:"De-select phantom scenes",
 			      multiple:true, options:scenePhantoms, image: "st.custom.buttons.subtract-icon"
@@ -246,28 +308,172 @@ def sceneDiscovery() {
 	}
 }
 
+private deviceBuilder() {
+	def bridgesEligible = bridgeDevicesEnumerated().findAll({ k,v -> !v }).keySet() as List 	// eligible bridge only if it doesn't enumerate/list its devices
+
+	return dynamicPage(name: "deviceBuilder", title: "Device Builder", nextPage: "deviceBuilderValidate", uninstall: false) {
+		section {
+			input "deviceBuilderBridge", "enum", required: true, submitOnChange: false,
+			      title:"Bridge:",
+			      multiple:false, options: bridgesEligible
+			input "deviceBuilderType", "enum", required: true, submitOnChange: true,
+			      title:"Device Type:",
+			      multiple: false, options: ['WallDimmer','PlugInDimmer','WallSwitch','Shade','Pico2Button','Pico2ButtonRaiseLower','Pico3Button','Pico3ButtonRaiseLower','Pico4Button','Pico4ButtonScene','Pico4ButtonZone','Pico4Button2Group','Keypad']
+			input "deviceBuilderID", "text", required: true, submitOnChange: true,
+			      title: "Device ID/Integration ID#:",
+			      defaultValue: ""
+			if (deviceBuilderType == 'Keypad') {
+				input "deviceBuilderMaxBtn", "number", required: true, submitOnChange: false,
+				      title: "Max Buttons #:",
+				      range: "1..*", defaultValue: 1
+			}
+			input "deviceBuilderName", "text", required: true, submitOnChange: false, title:"Device Name:"
+			input "deviceBuilderRoom", "text", required: false, submitOnChange: false, title:"Device Room:"
+		}
+	}
+}
+
+private deviceBuilderValidate() {
+	def pageProperties = [
+		name: "deviceBuilderValidate",
+		title: "Device Builder"
+   	]
+	// use deviceID as a positive integer if possible
+	def lipID = deviceBuilderID.isInteger() ? (deviceBuilderID.toInteger().abs()?:-1) : -1
+	def devID = (lipID > 0) ? lipID as String : deviceBuilderID
+	if (deviceBuilderBridge && deviceBuilderType && (lipID > 0 || deviceBuilderID) && deviceBuilderName &&
+	    !(switchesDiscovered()+shadesDiscovered()+picosDiscovered()).any { k,v -> (bridgeOfDNI(k) == deviceBuilderBridge) &&
+	                                                                              (serialNumberOfDNI(k) == deviceBuilderID.toString()) }
+	   ) {
+		pageProperties.nextPage = "deviceDiscovery"
+		def newDeviceRoom = deviceBuilderRoom ?: ''
+		def newDevice = createDeviceSpec(deviceBuilderBridge, deviceBuilderType,
+		                                 devID, (deviceBuilderType == 'Keypad') ? deviceBuilderMaxBtn : devID,
+		                                 deviceBuilderName, newDeviceRoom, devID)
+		state.builtDevices[newDevice.dni] = newDevice
+
+		return dynamicPage(pageProperties) {
+   			section {
+				paragraph "Added Device:\nBridge: $deviceBuilderBridge\nDevice Type: $deviceBuilderType\nDevice/Zone ID # $devID\n" +
+				          "Name: $deviceBuilderName\n${newDeviceRoom?'Room: ':''}$newDeviceRoom"
+				paragraph "Tap 'Done', or 'Back' to add another."
+				paragraph "Select added devices on the next page to use them now."
+			}
+		}
+	} else {
+		pageProperties.nextPage = "deviceBuilder"
+
+		return dynamicPage(pageProperties) {
+			section {
+				paragraph "Cannot add this Device for Bridge: $deviceBuilderBridge; # $deviceBuilderID is invalid or may already exist.\n\nTap 'Done' to correct the specification."
+			}
+		}
+	}
+}
+
+private deviceRemoverConfirm() {
+	def pageProperties = [
+		name: "deviceRemoverConfirm",
+		title: "Device Removal",
+		nextPage: "deviceDiscovery"
+   	]
+	def drCount = "No"
+	if (devicesToRemove) {
+		devicesToRemove.each { k -> state.builtDevices.remove(k)}
+		drCount = "${devicesToRemove.size()}"
+	}
+	app.updateSetting("devicesToRemove", [])
+	return dynamicPage(pageProperties) {
+		section {
+			paragraph drCount + " device${(drCount!='1')?'s were':' was'} removed.\n\nTap 'Next'."
+		}
+	}
+}
+
+private sceneBuilder() {
+	def bridgesEligible = bridgeDevicesEnumerated().findAll({ k,v -> !v }).keySet() as List 	// eligible bridge only if it doesn't enumerate/list its devices
+
+	return dynamicPage(name: "sceneBuilder", title: "Scene / Phantom Button Builder", nextPage: "sceneBuilderValidate", uninstall: false) {
+		section {
+			input "sceneBuilderBridge", "enum", required:true, submitOnChange: false, title: "Bridge:",
+			      multiple: false, options: bridgesEligible
+			input "sceneBuilderID", "number", required:true, submitOnChange: false, title: "Scene/Phantom Button #",
+			      multiple: false, range: "1..*", defaultValue: 1
+			input "sceneBuilderName", "text", required: true, submitOnChange: false, title: "Scene/Phantom Button Name:",
+			      multiple: false
+		}
+    }
+}
+
+private sceneBuilderValidate() {
+	def pageProperties = [
+		name: "sceneBuilderValidate",
+		title: "Scene / Phantom Button Builder",
+   	]
+	if (sceneBuilderBridge && sceneBuilderID && sceneBuilderName &&
+	    !scenesDiscovered().any { k,v -> (bridgeOfDNI(k) == sceneBuilderBridge) &&
+	                                     (sceneNumberOfDNI(k) as Integer == sceneBuilderID) }
+	   ) {
+		pageProperties.nextPage = "sceneDiscovery"
+		def newScene = createSceneSpec(sceneBuilderBridge, sceneBuilderID, sceneBuilderName)
+		state.builtScenes[newScene.dni] = newScene
+
+		return dynamicPage(pageProperties) {
+   			section {
+   				paragraph "Added Scene/Phantom Button:\nBridge: $sceneBuilderBridge\nScene/Phantom Button # $sceneBuilderID\nName: $sceneBuilderName"
+				paragraph "Tap 'Done', or 'Back' to add another."
+				paragraph "Select added Scenes/Phantom Buttons on the next page to use them now."
+			}
+		}
+	} else {
+		pageProperties.nextPage = "sceneBuilder"
+
+		return dynamicPage(pageProperties) {
+			section {
+				paragraph "Cannot add this Scene/Phantom Button for Bridge: $sceneBuilderBridge; # $sceneBuilderID may already exist.\n\nTap 'Done' to correct the specification."
+			}
+		}
+	}
+}
+
+private sceneRemoverConfirm() {
+	def pageProperties = [
+		name: "sceneRemoverConfirm",
+		title: "Scene / Phantom Button Removal",
+		nextPage: "sceneDiscovery"
+   	]
+	def srCount = "No"
+	if (scenesToRemove) {
+		scenesToRemove.each { k -> state.builtScenes.remove(k)}
+	    srCount = "${scenesToRemove.size()}"
+	}
+	app.updateSetting("scenesToRemove", [])
+	return dynamicPage(pageProperties) {
+		section {
+			paragraph srCount + " scene${(srCount!='1')?'s':' '}/phantom button${(srCount!='1')?'s were':' was'} removed.\n\nTap 'Save'."
+		}
+	}
+}
+// Creates a map to enumerate the bridges listed by the LutronPi server & indicate whether each enumerates its own devices (true) or not (false)
+private Map bridgeDevicesEnumerated() {
+	def allBridges = bridgesLPi
+	def bridgemap = [:]
+	if (allBridges instanceof java.util.Map) {
+		allBridges.each { k, v ->
+			bridgemap[k] = v.devicesEnumerated
+		}
+	}
+	return bridgemap
+}
+
 // Creates a map to populate the switches pref page
-Map switchesDiscovered() {
+private Map switchesDiscovered() {
 	def allSwitches = switches
 	def devicemap = [:]
 	if (allSwitches instanceof java.util.Map) {
 		allSwitches.each { k, v ->
 			def value = roomifyLutronDeviceName(v.lRoom, v.name) + (lRoomDeviceNames?'':(v.lRoom ? "?[${v.lRoom.replaceFirst(/\s[rR]oom$/,'')}]":''))
-			def key = v.dni
-			devicemap["${key}"] = value
-		}
-	}
-	return devicemap
-}
-
-// Creates a map to populate the picos pref page
-Map picosDiscovered() {
-	def allPicos = picos
-	def devicemap = [:]
-	if (allPicos instanceof java.util.Map) {
-		allPicos.each { k, v ->
-			def value = roomifyLutronDeviceName(v.lRoom, v.name) + (lRoomDeviceNames?'':(v.lRoom ? "?[${v.lRoom.replaceFirst(/\s[rR]oom$/,'')}]":''))
-			def key = v.dni
+			def key = baseOfDNI(v.dni)
 			devicemap["${key}"] = value
 		}
 	}
@@ -275,13 +481,27 @@ Map picosDiscovered() {
 }
 
 // Creates a map to populate the shades pref page
-Map shadesDiscovered() {
+private Map shadesDiscovered() {
 	def allShades = shades
 	def devicemap = [:]
 	if (allShades instanceof java.util.Map) {
 		allShades.each { k, v ->
 			def value = roomifyLutronDeviceName(v.lRoom, v.name) + (lRoomDeviceNames?'':(v.lRoom ? "?[${v.lRoom.replaceFirst(/\s[rR]oom$/,'')}]":''))
-			def key = v.dni
+			def key = baseOfDNI(v.dni)
+			devicemap["${key}"] = value
+		}
+	}
+	return devicemap
+}
+
+// Creates a map to populate the picos pref page
+private Map picosDiscovered() {
+	def allPicos = picos
+	def devicemap = [:]
+	if (allPicos instanceof java.util.Map) {
+		allPicos.each { k, v ->
+			def value = roomifyLutronDeviceName(v.lRoom, v.name) + (lRoomDeviceNames?'':(v.lRoom ? "?[${v.lRoom.replaceFirst(/\s[rR]oom$/,'')}]":''))
+			def key = baseOfDNI(v.dni)
 			devicemap["${key}"] = value
 		}
 	}
@@ -289,19 +509,50 @@ Map shadesDiscovered() {
 }
 
 // Creates a map to populate the scenes pref page
-Map scenesDiscovered() {
+private Map scenesDiscovered() {
 	def allScenes = scenes
 	def devicemap = [:]
 	if (allScenes instanceof java.util.Map) {
 		allScenes.each { k, v ->
 			def value = v.name as String
-			def key = v.dni
+			def key = baseOfDNI(v.dni)
 			devicemap["${key}"] = value
 		}
 	}
 	return devicemap
 }
+private baseOfDNI(String dni) {
+	def dnicomp = dni?.tokenize('.')
+	return (dnicomp?.size()? (dnicomp[0] + '.' + dnicomp[1]) : '')
+}
 
+private bridgeOfDNI(String dni) {
+	def dnicomp = dni?.tokenize('.')
+	return dnicomp? dnicomp[0] : ''
+}
+private serialNumberOfDNI(String dni) {
+	def dnicomp = dni?.tokenize('.')
+	return (dnicomp?.size() ? dnicomp[1] : '')
+}
+private sceneNumberOfDNI(String dni) {
+	def dnicomp = dni?.tokenize('.')
+	return (dnicomp?.size() ? dnicomp[1] : '')
+}
+
+// Returns all found bridges added to app.state (groovy magic: bridgesLPi)
+// at the same time, if required, initialize the app.state storage of manually-built devices and scenes
+def getBridgesLPi() {
+	if (!state.builtDevices) {
+		state.builtDevices = [:]
+	}
+	if (!state.builtScenes) {
+		state.builtScenes = [:]
+	}
+	if (!state.bridgesLPi) {
+		state.bridgesLPi = [:]
+	}
+	state.bridgesLPi
+}
 
 // Returns all found switches added to app.state (groovy magic: switches)
 def getSwitches() {
@@ -361,35 +612,44 @@ void ssdpOfflineDetect(data) {
 		def aLutronPi = lutronPiMap[selectedLPi]
 		log.debug "Selected LutronPi $selectedLPi : $aLutronPi"
 		if (aLutronPi?.ssdpPath) {	// was online, but now perhaps is not
-			if (state.ssdpSubscribed == 'SEARCH') {	// give it one more try
-				state.ssdpSubscribed = 'RETRY'
-				ssdpDiscover()
-				return
-			} else
-				state.ssdpSubscribed = 'NOREPLY'
-			aLutronPi.ssdpPath = ''		// ensure we notice when it comes back up
-//			if (notifyOnBridgeUpdate) {
-//				log.info "Notification: LutronPi server is offline"
-//				userNotification("LutronPi server is offline")
-//			}
-			def aChildDevice = getChildDevice(selectedLPi)
-			if (aChildDevice)
-				aChildDevice.sync('','')	// selected LutronPi server offline
+			switch (state.ssdpSubscribed) {	// give it few retries to avoid annoyance of missed detection
+				case 'SEARCH':
+					state.ssdpSubscribed = 'RETRY01'
+					break
+				case 'RETRY01':
+					state.ssdpSubscribed = 'RETRY02'
+					break
+				case 'RETRY02':
+					state.ssdpSubscribed = 'RETRY03'
+					break
+				default:
+					state.ssdpSubscribed = 'NOREPLY'
+					aLutronPi.ssdpPath = ''		// ensure we notice when it comes back up
+//					if (notifyOnBridgeUpdate) {
+//						log.info "Notification: LutronPi server is offline"
+//						userNotification("LutronPi server is offline")
+//					}
+					def aChildDevice = getChildDevice(selectedLPi)
+					if (aChildDevice)
+						aChildDevice.sync('','')	// selected LutronPi server offline
+					return
+			}
+			ssdpDiscover()
 		}
 	}
 }
 
 void ssdpDiscover() {
-	log.debug "Discovering SSDP updates for ${LUTRONPI_URN} at ${now()}"
-	if (state.ssdpSubscribed != 'RETRY')
+	log.debug "Discovering SSDP updates for ${LUTRONPI_URN} at ${now()} : ${state.ssdpSubscribed}"
+	if (!state.ssdpSubscribed.startsWith('RETRY'))
 		state.ssdpSubscribed = 'SEARCH'
-	runIn(60, "ssdpOfflineDetect")	// caution: the ST hub doesn't always catch M-SEARCH replies on the first try
+	runIn(10, "ssdpOfflineDetect")	// caution: the ST hub doesn't always catch M-SEARCH replies on the first try
 	sendHubCommand(new physicalgraph.device.HubAction("lan discovery ${LUTRONPI_URN}", physicalgraph.device.Protocol.LAN))
 }
 
 // Callback when an SSDP M-SEARCH answer is received
 def ssdpHandler(evt) {
-	runIn(10*60, "ssdpOfflineDetect")	// reschedule the offline checker beyond next discover (cheaper than unschedule?)
+	runIn(11*60, "ssdpOfflineDetect")	// reschedule the offline checker beyond next 2 discoveries (cheaper than unschedule?)
 	state.ssdpSubscribed = 'SUBSCRIBED'
 	def hubId = evt?.hubId
 	def description = evt.description
@@ -541,73 +801,96 @@ private String roomifyLutronDeviceName(lRoom, lName) {
 }
 
 // Request device list from LutronPi server
-private discoverLutronDevices() {
-	log.debug "Discovering your Lutron Devices"
+private discoverBridgeDevices() {
+	log.debug "Discovering your LutronPi Devices"
 
-   // Get switches and picos and add to state
+	// Get switches and picos and add to state
 	sendToLutronPi('GET','/devices', [:], lutronDeviceHandler)
 }
 
-String dniLDevice(String bridgeRef, String deviceRef) {
-	if (bridgeRef)
-		return (bridgeRef +'.' + deviceRef)
-	else
-		return deviceRef
+String dniLDevice(String bridgeRef, String deviceRef='', Boolean baseDNI=false) {
+	if (!bridgeRef)
+		bridgeRef = 'LutronPi'
+	return (bridgeRef + (deviceRef?('.' + deviceRef):'') + (baseDNI?'':'.LPiD'))
 }
 
-String dniLScene(String bridgeRef, String sceneRef) {
-	if (bridgeRef)
-		return (bridgeRef + '.' + sceneRef)
-	else
-		return 'Lutron' + '.' + sceneRef
+String dniLScene(String bridgeRef, String sceneRef='', Boolean baseDNI=false) {
+	if (!bridgeRef)
+		bridgeRef = 'LutronPi'
+	return (bridgeRef + (sceneRef?('.' + sceneRef):'') + (baseDNI?'':'.LPiS'))
 }
 
 // Handle device list request response from LutronPi server
 def lutronDeviceHandler(physicalgraph.device.HubResponse hubResponse) {
-	log.debug "at the Lutron device list handler"
+	log.debug "at the LutronPi device list handler"
 
 	def body = hubResponse.json
 	if (body != null) {
 		log.debug body
+		def allBridges = bridgesLPi
+		allBridges.clear()
+
 		def allSwitches = switches
 		allSwitches.clear()
-		def allPicos = picos
-		allPicos.clear()
+		allSwitches << state.builtDevices.findAll { k,v -> v.deviceType && ['WallDimmer','PlugInDimmer','WallSwitch'].contains(v.deviceType) }
+
 		def allShades = shades
 		allShades.clear()
+		allShades << state.builtDevices.findAll { k,v -> v.deviceType && (v.deviceType?.endsWith('Shade')) }
+
+		def allPicos = picos
+		allPicos.clear()
+		allPicos << state.builtDevices.findAll { k,v -> v.deviceType && (v.deviceType?.startsWith('Pico') || v.deviceType == 'Keypad') }
 
 		body.each { k ->
 			log.debug k
 			def lBridge =  k.Bridge ? k.Bridge.toString() : ''
-			def dni = dniLDevice(lBridge, k.SerialNumber.toString())
-			def lRoom = ((k.FullyQualifiedName?.size() > 1) && (k.FullyQualifiedName[1] == k.Name)) ? k.FullyQualifiedName[0] : ''
 			def lipID = k.ID ?: 0;
-			def deviceSpec = [:]
-			switch (k.DeviceType) {
-				case ['WallDimmer','PlugInDimmer','WallSwitch']:
-					def zone = k.Zone ?: (k.LocalZones ? (k.LocalZones[0].href?.replaceFirst(/(?i)\/zone\//,'') ?: 0) : 0)
-					allSwitches[dni] = [name: k.Name, lipID: lipID, zone: zone, dni: dni, deviceType: k.DeviceType]
-					if (lRoom)
-						allSwitches[dni] << [lRoom: lRoom]
-					break
-				case { it.startsWith('Pico') }:		// "Pico2Button*" || "Pico3Button*" || "Pico4Button*" etc.
-					allPicos[dni] = [name: k.Name, lipID: lipID, dni: dni, deviceType: k.DeviceType]
-					if (lRoom)
-						allPicos[dni] << [lRoom: lRoom]
-					break;
-				case { it.endsWith('Shade') }:		//['SerenaHoneycombShade','SerenaRollerShade','TriathlonHoneycombShade','TriathlonRollerShade','QsWirelessShade']
-					def zone = k.Zone ?: (k.LocalZones ? (k.LocalZones[0].href?.replaceFirst(/(?i)\/zone\//,'') ?: 0) : 0)
-					allShades[dni] = [name: k.Name, lipID: lipID, zone: zone, dni: dni, deviceType: k.DeviceType]
-					if (lRoom)
-						allShades[dni] << [lRoom: lRoom]
-					break;
+			if (lBridge && lipID == 1) {
+				allBridges[lBridge] = [devicesEnumerated: !k.NoDeviceList, type: k.DeviceType]
+			} else {
+				def lRoom = ((k.FullyQualifiedName?.size() > 1) && (k.FullyQualifiedName[1] == k.Name)) ? k.FullyQualifiedName[0] : ''
+				def zone = k.Zone ?: (k.LocalZones ? (k.LocalZones[0].href?.replaceFirst(/(?i)\/zone\//,'') ?: 0) : 0)
+				def devSpec = createDeviceSpec(lBridge, k.DeviceType, lipID, zone, k.Name, lRoom, k.SerialNumber)
+				switch (devSpec.deviceType) {
+					case ['WallDimmer','PlugInDimmer','WallSwitch']:
+						allSwitches[devSpec.dni] = devSpec
+						break
+					case { it?.endsWith('Shade') }:		//['SerenaHoneycombShade','SerenaRollerShade','TriathlonHoneycombShade','TriathlonRollerShade','QsWirelessShade']
+						allShades[devSpec.dni] = devSpec
+						break;
+					case { it?.startsWith('Pico') }:		// "Pico2Button*" || "Pico3Button*" || "Pico4Button*" etc.
+						allPicos[devSpec.dni] = devSpec
+						break;
+				}
 			}
 		}
 	}
 }
 
-private discoverLutronScenes() {
-	log.debug "Discovering your Lutron Scenes"
+private Map createDeviceSpec(lBridge, lDeviceType, lipID, lZoneOrMaxBtn, lName, lRoom, lSerialNumber) {
+	def baseDNI = dniLDevice(lBridge, lSerialNumber.toString(), true)
+	def deviceSpec = [:]
+	switch (lDeviceType) {
+		case ['WallDimmer','PlugInDimmer','WallSwitch']:
+		case { it?.endsWith('Shade') }:		//['SerenaHoneycombShade','SerenaRollerShade','TriathlonHoneycombShade','TriathlonRollerShade','QsWirelessShade']
+			deviceSpec << [name: lName, lipID: lipID, zone: lZoneOrMaxBtn, dni: baseDNI, deviceType: lDeviceType]
+			if (lRoom)
+				deviceSpec << [lRoom: lRoom]
+			break
+		case 'Keypad':
+			deviceSpec << [maxButton: lZoneOrMaxBtn]
+		case { it?.startsWith('Pico') }:		// "Pico2Button*" || "Pico3Button*" || "Pico4Button*" etc.
+			deviceSpec << [name: lName, lipID: lipID, dni: baseDNI, deviceType: lDeviceType]
+			if (lRoom)
+				deviceSpec << [lRoom: lRoom]
+			break
+	}
+	return deviceSpec
+}
+
+private discoverBridgeScenes() {
+	log.debug "Discovering your LutronPi Scenes"
 
 	// Get scenes and add to state
 	sendToLutronPi('GET','/scenes', [:], lutronSceneHandler)
@@ -615,21 +898,26 @@ private discoverLutronScenes() {
 
 // Handle scene list request response from LutronPi server
 def lutronSceneHandler(physicalgraph.device.HubResponse hubResponse) {
-	log.debug "at the Lutron scene list handler"
+	log.debug "at the LutronPi scene list handler"
+	def allScenes = scenes
+	allScenes.clear()
+	allScenes << state.builtScenes
+
 	def body = hubResponse.json
 	if (body != null) {
 		log.debug body
-		def allScenes = scenes
-		allScenes.clear()
 
 		body.each { k ->
-			def virtButtonNum = k.href.replaceFirst(/(?i)\/virtualbutton\//,'')
-			def lBridge =  k.Bridge ? k.Bridge.toString() : ''
-			def dni = dniLScene(lBridge, virtButtonNum.toString())
-			allScenes[dni] = [name: k.Name, virtualButton: virtButtonNum, dni: dni]
+        	def newScene = createSceneSpec(k.Bridge ? k.Bridge.toString() : '', k.href.replaceFirst(/(?i)\/virtualbutton\//,''), k.Name);
+			allScenes[newScene.dni] = newScene
 		}
-		log.debug allScenes
 	}
+	log.debug allScenes
+	log.debug scenes
+}
+
+private Map createSceneSpec(lBridge, virtButtonNum, name) {
+	return [name: name, virtualButton: virtButtonNum, dni: dniLScene(lBridge, virtButtonNum.toString(), true)]
 }
 
 // Generate the list of LutronPi servers for the preferences dialog
@@ -663,7 +951,7 @@ private String HubAddress() {
 def uninstalled() {
 	if (lutronPiMap != [:] && selectedLPi)
 		unsubscribeLutronPi()
-	log.info "The ${app.name} SmartApp has been uninstalled"
+	log.info "The ${app.name} SmartApp is being uninstalled"
 }
 
 def installed() {
@@ -685,55 +973,78 @@ def initialize() {
 
 	log.info "ST Hub at ${HubAddress()}"
 
-	// consolidate selected device list and clean up those previously selected but no longer present
+	// clean up devices/scenes previously selected but no longer present (phantoms) and existing devices now deselected
 	// note that preference inputs (settings map) is read-only, so selectedXXX lists cannot be programmatically modified
-	def selectedDevices = [selectedLPi]
-	def deleteDNIList
+	def activeDNIList
 	def someDevices
-	if (selectedSwitches != null) {
-		someDevices = switches
-		deleteDNIList = []
-		selectedDevices += selectedSwitches.findAll {k -> if (someDevices[k]) true; else {deleteDNIList << k; false} }
-		deleteDNIList.each {k -> if (['Lutron Dimmer','Lutron Switch'].contains(getChildDevice(k)?.typeName)) deleteChildDevice(k) }
-	}
-	if (selectedShades != null) {
-		someDevices = shades
-		deleteDNIList = []
-		selectedDevices += selectedShades.findAll {k -> if (someDevices[k]) true; else {deleteDNIList << k; false} }
-		deleteDNIList.each {k -> if (getChildDevice(k)?.typeName?.startsWith('Lutron Shade')) deleteChildDevice(k) }
-	}
-	if (selectedPicos != null) {
-		someDevices = picos
-		deleteDNIList = []
-		selectedDevices += selectedPicos.findAll {k -> if (someDevices[k]) true; else {deleteDNIList << k; false} }
-		deleteDNIList.each {k -> if (getChildDevice(k)?.typeName?.startWith('Lutron Pico')) deleteChildDevice(k) }
-	}
-	if (selectedScenes != null) {
-		someDevices = scenes
-		deleteDNIList = []
-		selectedDevices += selectedScenes.findAll {k -> if (someDevices[k]) true; else {deleteDNIList << k; false} }
-		deleteDNIList.each {k -> if (getChildDevice(k)?.typeName?.startWith('Lutron Scene')) deleteChildDevice(k) }
+
+	def listChildDevices = getAllChildDevices().findAll { it.deviceNetworkId != selectedLPi }
+
+	someDevices = switches
+	activeDNIList = selectedSwitches.findAll { k -> !!someDevices[k] }
+	listChildDevices.eachWithIndex {acd, acdix->
+		if (['Lutron Dimmer','Lutron Switch'].contains(acd?.typeName)) {
+            if (!activeDNIList.contains(baseOfDNI(acd.deviceNetworkId)))
+				deleteChildDeviceSafe(acd)
+			listChildDevices[acdix] = null
+		}
 	}
 
-	log.debug "The selected devices are: " + selectedDevices + ". Any other devices will be ignored or deleted"
-//	log.debug "Currently installed devices are: " + getAllChildDevices()
-	def deleteDevices = (selectedDevices) ? (getAllChildDevices().findAll {!selectedDevices.contains(it.deviceNetworkId)})
-	                                      : getAllChildDevices()
-	if (deleteDevices) {
-		log.debug "Devices that will be deleted are: " + deleteDevices
-		deleteDevices.each { deleteChildDevice(it.deviceNetworkId) }
+	someDevices = shades
+	activeDNIList = selectedShades.findAll { k -> !!someDevices[k] }
+	listChildDevices.eachWithIndex {acd, acdix->
+		if (acd?.typeName?.startsWith('Lutron Shade')) {
+            if (!activeDNIList.contains(baseOfDNI(acd.deviceNetworkId)))
+            	deleteChildDeviceSafe(acd)
+			listChildDevices[acdix] = null
+		}
 	}
+
+	someDevices = picos
+	activeDNIList = selectedPicos.findAll { k -> !!someDevices[k] }
+	listChildDevices.eachWithIndex {acd, acdix->
+		if (acd?.typeName?.startsWith('Lutron Pico') || acd?.typeName?.startsWith('Lutron Keypad')) {
+            if (!activeDNIList.contains(baseOfDNI(acd.deviceNetworkId)))
+            	deleteChildDeviceSafe(acd)
+			listChildDevices[acdix] = null
+		}
+	}
+
+	someDevices = scenes
+	activeDNIList = selectedScenes.findAll { k -> !!someDevices[k] }
+	listChildDevices.eachWithIndex {acd, acdix->
+		if (acd?.typeName?.startsWith('Lutron Scene')) {
+            if (!activeDNIList.contains(baseOfDNI(acd.deviceNetworkId)))
+            	deleteChildDeviceSafe(acd)
+			listChildDevices[acdix] = null
+		}
+	}
+	if (listChildDevices.any {acd -> acd})
+		log.warn "Unidentified child devices are: " + listChildDevices.findResults { acd -> acd?.deviceNetworkId }
+
 	// If a LutronPi server was actually selected add the child devices
 	if (selectedLPi) {
-		addLutronPi()
-		addDevices('switches')
-		addDevices('shades')
-		addPicos()
-		addScenes()
+		if (addLutronPi()) {
+			addDevices('switches')
+			addDevices('shades')
+			addPicos()
+			addScenes()
+		}
 	}
 
 	ssdpSubscribe()
 	ssdpSchedule()
+}
+
+private deleteChildDeviceSafe(aChildDevice) {
+	try {
+		deleteChildDevice(aChildDevice.deviceNetworkId)
+        log.info "Deleted LutronPi child device with DNI:${aChildDevice.deviceNetworkId}."
+        return null
+	} catch (e) {
+		log.warn "Unable to delete LutronPi child device with DNI:${aChildDevice.deviceNetworkId}; probably still in use elsewhere. [ERR=$e]"
+        return e
+	}
 }
 
 String lutronPiLabel(dispIP = null, dispPort = null) {
@@ -747,8 +1058,8 @@ def lutronPiCommStatusHandler(evt) {
 	}
 }
 
-def addLutronPi() {
-	def dni = selectedLPi
+Boolean addLutronPi() {	// return success=true or failure=false
+	def stDNI = selectedLPi
 	def aLutronPi = lutronPiMap[selectedLPi]
 
 	// having just completed a manual devices/scenes update, reset the update polling data
@@ -763,21 +1074,25 @@ def addLutronPi() {
 
 		def deviceSpec = [nameSpace: 'lutronpi', deviceType: 'LutronPi Bridge Server']
 		try {
-			log.info "Adding ${aLutronPiLabel} server: DNI ${dni}"
-			aChildDevice = addChildDevice(deviceSpec.nameSpace, deviceSpec.deviceType, dni, aLutronPi.hub, [
+			log.info "Adding $aLutronPiLabel server: DNI $stDNI"
+			aChildDevice = addChildDevice(deviceSpec.nameSpace, deviceSpec.deviceType, stDNI, aLutronPi.hub, [
 						"label": aLutronPiLabel,
 						"data": [
 								'ip': aLutronPi.ip,
 								'port': aLutronPi.port,
 								'ssdpUSN': aLutronPi.ssdpUSN,
 								'ssdpPath': aLutronPi.ssdpPath
-								]
+						        ]
 			])
 			pollLutronPi()	// do an initial server summary poll; let the SSDP handler take it from here
+			return true
 		} catch (e) {
-			log.warn "Unable to add LutronPi device as ${deviceSpec.nameSpace}:${deviceSpec.deviceType}:${dni}",e
+			log.error "Unable to add LutronPi device as ${deviceSpec.nameSpace}:${deviceSpec.deviceType} with DNI $stDNI [ERR=$e]"
+			log.warning "There may be another SmartApp already connected to this same LAN interface (duplicate MAC address)"
+			return false
 		}
 	}
+	return true
 }
 
 def addDevices(String devgroup) {
@@ -786,7 +1101,7 @@ def addDevices(String devgroup) {
 	def zone
 	def lipID
 	def deviceType
-	def dni
+	def baseDNI, stDNI
 	def aChildDevice
 	def deviceData
 
@@ -795,11 +1110,11 @@ def addDevices(String devgroup) {
 	switch (devgroup) {
 		case 'switches':
 			allDevices = switches
-			selectedDevices = selectedSwitches.findAll { k-> allDevices[k]}
+			selectedDevices = selectedSwitches.findAll { k-> allDevices[k] }
 			break
 		case 'shades':
 			allDevices = shades
-			selectedDevices = selectedShades.findAll { k-> allDevices[k]}
+			selectedDevices = selectedShades.findAll { k-> allDevices[k] }
 			break
 		default:
 			return
@@ -809,14 +1124,13 @@ def addDevices(String devgroup) {
 		log.debug "Selected $devgroup device: " + allDevices[k]
 
 		lRoom = allDevices[k].lRoom ?: ''
-		dName = roomifyLutronDeviceName(allDevices[k].lRoom ?: '', allDevices[k].name)
+		dName = roomifyLutronDeviceName(lRoom, allDevices[k].name)
 		zone = allDevices[k].zone
 		lipID = allDevices[k].lipID
 		deviceType = allDevices[k].deviceType
-		dni = allDevices[k].dni
+		baseDNI = allDevices[k].dni
+		stDNI = dniLDevice(baseDNI)
 
-		// Check if child device already exists
-		aChildDevice = getChildDevice(dni)
 		deviceData = [
 						'zone': zone,
 						'lipID': lipID,
@@ -825,10 +1139,16 @@ def addDevices(String devgroup) {
 		if (lRoom)
 			deviceData << ['lRoom': lRoom]
 
+		// Check if child device already exists
+		aChildDevice = getChildDevice(stDNI)
+		if (!aChildDevice)		// also check for legacy DNI if necessary
+			aChildDevice = getChildDevice(baseDNI)
+
 		if (aChildDevice) {	// just update device data, e.g. name or ID changes
 			if (!lockSTDeviceNames)
 				aChildDevice.label = dName
 			deviceData.each { kk, vv -> aChildDevice.data[kk] = vv }
+			log.info "Updated ${aChildDevice.label} ($deviceType) with DNI ${aChildDevice.deviceNetworkId}"
 		} else {			// create a new device
 			def deviceSpec = [:]
 			switch (deviceType) {
@@ -838,19 +1158,19 @@ def addDevices(String devgroup) {
 				case ['WallSwitch']:
 					deviceSpec = [nameSpace:'lutronpi',deviceType:'Lutron Switch']
 					break;
-				case { it.endsWith('Shade') }:		//['SerenaHoneycombShade','SerenaRollerShade','TriathlonHoneycombShade','TriathlonRollerShade','QsWirelessShade']
+				case { it?.endsWith('Shade') }:		//['SerenaHoneycombShade','SerenaRollerShade','TriathlonHoneycombShade','TriathlonRollerShade','QsWirelessShade']
 					deviceSpec = [nameSpace:'lutronpi',deviceType:'Lutron Shade']
 					break;
 			}
 			if (deviceSpec) {
 				try {
-					log.info("Adding ${dName} (${deviceType}) as lipID ${lipID}/Zone ${zone} with DNI ${dni}")
-					aChildDevice = addChildDevice(deviceSpec.nameSpace, deviceSpec.deviceType, dni, null, [
+					log.info "Adding $dName ($deviceType) as lipID $lipID/Zone $zone with DNI $stDNI"
+					aChildDevice = addChildDevice(deviceSpec.nameSpace, deviceSpec.deviceType, stDNI, null, [
 						'label': dName,
 						'data': deviceData
 					])
 				} catch (e) {
-					log.warn "Unable to add ${dName} as ${deviceSpec.nameSpace}:${deviceSpec.deviceType}:${dni} [ERR=$e]"
+					log.error "Unable to add $dName as ${deviceSpec.nameSpace}:${deviceSpec.deviceType} with DNI $stDNI [ERR=$e]"
 				}
 			}
 		}
@@ -866,35 +1186,44 @@ def addPicos() {
 	def lRoom
 	def lipID
 	def deviceType
-	def dni
+	def maxButton
+	def baseDNI, stDNI
 	def aChildDevice
 	def deviceData
 
 	def allPicos = picos
-	def	selectedDevices = selectedPicos.findAll { k-> allPicos[k]}
+	def selectedDevices = selectedPicos.findAll { k-> allPicos[k] }
 
 	selectedDevices?.each { k ->
-		log.debug "Selected Pico: " + allPicos[k]
+		log.debug "Selected Pico/Keypad: " + allPicos[k]
 
 		lRoom = allPicos[k].lRoom ?: ''
-		dName = roomifyLutronDeviceName(allPicos[k].lRoom ?: '', allPicos[k].name)
+		dName = roomifyLutronDeviceName(lRoom, allPicos[k].name)
 		lipID = allPicos[k].lipID
 		deviceType = allPicos[k].deviceType
-		dni = allPicos[k].dni
+		maxButton = (allPicos[k].maxButton?:0) as Integer
+		baseDNI = allPicos[k].dni
+		stDNI = dniLDevice(baseDNI)
 
-		// Check if child already exists
-		aChildDevice = getChildDevice(dni)
 		deviceData = [
 						'lipID': lipID,
 						'deviceType': deviceType,
 		             ]
 		if (lRoom)
 			deviceData << ['lRoom': lRoom]
+		if (maxButton)
+			deviceData << ['maxButton': maxButton]
+
+		// Check if child already exists
+		aChildDevice = getChildDevice(stDNI)
+		if (!aChildDevice)		// also check for legacy DNI if necessary
+			aChildDevice = getChildDevice(baseDNI)
 
 		if (aChildDevice) {	// just update device data, e.g. name or ID changes
 			if (!lockSTDeviceNames)
 				aChildDevice.label = dName
 			deviceData.each { kk, vv -> aChildDevice.data[kk] = vv }
+			log.info "Updated ${aChildDevice.label} ($deviceType) with DNI ${aChildDevice.deviceNetworkId}"
 		} else {			// create a new device
 			def deviceSpec = [:]
 			switch (deviceType) {
@@ -913,16 +1242,19 @@ def addPicos() {
 				case ['Pico4Button', 'Pico4ButtonScene', 'Pico4ButtonZone', 'Pico4Button2Group']:
 					deviceSpec = [nameSpace:'lutronpi',deviceType:'Lutron Pico 4B']
 					break;
+				case 'Keypad':
+					deviceSpec = [nameSpace:'lutronpi',deviceType:'Lutron Keypad']
+					break;
 			}
 			if (deviceSpec) {
 				try {
-					log.info "Adding ${dName} (${deviceType}) with lipID ${lipID} with DNI ${dni}"
-					aChildDevice = addChildDevice(deviceSpec.nameSpace, deviceSpec.deviceType, dni, null, [
+					log.info "Adding $dName ($deviceType) with lipID $lipID with DNI $stDNI"
+					aChildDevice = addChildDevice(deviceSpec.nameSpace, deviceSpec.deviceType, stDNI, null, [
 							'label': dName,
 							'data': deviceData
 					])
 				} catch (e) {
-					log.warn "Unable to add ${dName} as ${deviceSpec.nameSpace}:${deviceSpec.deviceType}:${dni} [ERR=$e]"
+					log.error "Unable to add $dName as ${deviceSpec.nameSpace}:${deviceSpec.deviceType} with DNI $stDNI [ERR=$e]"
 				}
 			}
 		}
@@ -936,40 +1268,45 @@ def addPicos() {
 def addScenes() {
 	def dName
 	def virtButton
-	def dni
+	def baseDNI, stDNI
 	def aChildDevice
 	def deviceData
 
 	def allScenes = scenes
-	def	selectedDevices = selectedScenes.findAll { k-> allScenes[k]}
+	def selectedDevices = selectedScenes.findAll { k-> allScenes[k] }
 
 	selectedDevices?.each { k ->
 		log.debug "Selected scene: " + allScenes[k]
 		dName = allScenes[k].name
 		virtButton = allScenes[k].virtualButton
- 		dni = allScenes[k].dni
+ 		baseDNI = allScenes[k].dni
+		stDNI = dniLScene(baseDNI)
 
-		// Check if child already exists
-		aChildDevice = getChildDevice(dni)
 		deviceData = [
 					'virtualButton': virtButton,
 		             ]
+
+		// Check if child already exists
+		aChildDevice = getChildDevice(stDNI)
+		if (!aChildDevice)		// also check for legacy DNI if necessary
+			aChildDevice = getChildDevice(baseDNI)
 
 		if (aChildDevice) {	// just update device data, e.g. name changes
 			if (!lockSTDeviceNames)
 				aChildDevice.label = dName
 			deviceData.each { kk, vv -> aChildDevice.data[kk] = vv }
+			log.info "Updated ${aChildDevice.label} (Scene) with DNI ${aChildDevice.deviceNetworkId}"
 		} else {			// create a new device
 			def deviceSpec = [nameSpace: 'lutronpi', deviceType: 'Lutron Scene']
 			try {
-				log.info "Adding the scene ${dName} with the DNI ${dni}"
-				aChildDevice = addChildDevice(deviceSpec.nameSpace, deviceSpec.deviceType, dni, null, [
+				log.info "Adding the scene $dName with DNI $stDNI"
+				aChildDevice = addChildDevice(deviceSpec.nameSpace, deviceSpec.deviceType, stDNI, null, [
 					'label': dName,
 					'data': deviceData
 				])
 				// no initial refresh required since we cannot keep track of Lutron scene status
 			} catch (e) {
-				log.warn "Unable to add scene ${dName} as ${deviceSpec.nameSpace}:${deviceSpec.deviceType}:${dni} [ERR=$e]"
+				log.error "Unable to add scene $dName as ${deviceSpec.nameSpace}:${deviceSpec.deviceType} with DNI $stDNI [ERR=$e]"
 			}
 		}
 	}
@@ -1000,7 +1337,7 @@ def parse(description) {
 			if (zone) {
 				def aChildDevice =
 					getAllChildDevices().find { d->
-						((d.getDataValue('zone') as Integer) == zone) && (d.device.deviceNetworkId.tokenize('.')[0] == lBridge)
+						((d.getDataValue('zone') as Integer) == zone) && (bridgeOfDNI(d.device.deviceNetworkId as String) == lBridge)
 					}
 				if (aChildDevice) {
 					def eventLinkText = "${aChildDevice.label} level to $level"
@@ -1025,40 +1362,44 @@ def parse(description) {
 			def lDeviceSN = (description?.Body?.SerialNumber ?: '') as String
 			def button = description?.Body?.Button
 			def action = description?.Body?.Action
-			if (lDeviceSN) {
-				if (lBridge == lDeviceSN) {	// if bridge == device, it's a scene
-					isScene = true;
-					dni = dniLScene(lBridge, button as String)
-				}
-				else					// else it's a Pico
-					dni = dniLDevice(lBridge, lDeviceSN)
-				aChildDevice = getChildDevice(dni)
-			} else {					// lacking a device SN, try looking up the device by LIP ID
-				def lipID
-				try { lipID = (description?.Body?.ID ?: 0) as Integer } catch (e) { lipID = 0 }
-				if (lipID == 1) {		// if ID=1, that's a bridge, so it's a scene
-					isScene = true;
-					dni = dniLScene(lBridge, button as String)
+
+			for (def tryLegacyDNI = 0; tryLegacyDNI <= 1; tryLegacyDNI++) {
+				if (lDeviceSN) {
+					if (lBridge == lDeviceSN) {	// if bridge == device, it's a scene
+						isScene = true;
+						dni = dniLScene(lBridge, button as String, tryLegacyDNI as Boolean)
+					}
+					else					// else it's a Pico
+						dni = dniLDevice(lBridge, lDeviceSN, tryLegacyDNI as Boolean)
 					aChildDevice = getChildDevice(dni)
-				} else
-					aChildDevice =
-						getAllChildDevices().find { d ->
-							((d.getDataValue('lipID') as Integer) == lipID) && (d.device.deviceNetworkId.tokenize('.')[0] == lBridge)
-						}
+				} else {					// lacking a device SN, try looking up the device by LIP ID
+					def lipID
+					try { lipID = (description?.Body?.ID ?: 0) as Integer } catch (e) { lipID = 0 }
+					if (lipID == 1) {		// if ID=1, that's a bridge, so it's a scene
+						isScene = true;
+						dni = dniLScene(lBridge, button as String, tryLegacyDNI as Boolean)
+						aChildDevice = getChildDevice(dni)
+					} else
+						aChildDevice =
+							getAllChildDevices().find { d ->
+								((d.getDataValue('lipID') as Integer) == lipID) && (bridgeOfDNI(d.device.deviceNetworkId as String) == lBridge)
+							}
+				}
+				if (aChildDevice) {
+					def eventLinkText = (isScene?'Scene':'Pico') + " ${aChildDevice.label}:$button $action"
+					def descrText = eventLinkText
+					log.debug eventLinkText
+					sendEvent(	aChildDevice,
+								[ name: 'button', value: action, data: [buttonNumber: button],
+								  descriptionText: descrText,
+								  isStateChange: true,
+								  linkText: eventLinkText
+								] )
+					break
+				}
 			}
-			if (aChildDevice) {
-				def eventLinkText = (isScene?'Scene':'Pico') + " ${aChildDevice.label}:$button $action"
-				def descrText = eventLinkText
-				log.debug eventLinkText
-				sendEvent(	aChildDevice,
-							[ name: 'button', value: action, data: [buttonNumber: button],
-							  descriptionText: descrText,
-							  isStateChange: true,
-							  linkText: eventLinkText
-							] )
-				break
-			}
-			log.warn "LutronPi referenced unknown ${isScene?'scene':'Pico'}: $lBridge:$lDeviceSN:$button"
+			if (tryLegacyDNI > 1)
+				log.warn "LutronPi referenced unknown ${isScene?'scene':'Pico'}: $lBridge:$lDeviceSN:$button"
 			break
 		default:
 			log.warning "Unknown communique from LutronPi: $description"
@@ -1066,20 +1407,27 @@ def parse(description) {
 	}
 }
 
+private Map buildLPiBaseRequest(stDevice) {
+	def req = [bridge: bridgeOfDNI(stDevice.device.deviceNetworkId)]
+	def devID = stDevice.getDataValue('lipID')
+	if (devID)
+		req << [deviceID: devID]
+	def zone = stDevice.getDataValue('zone')
+	if (zone)
+		req << [zone: zone as Integer]
+	return req
+}
+
 // Send refresh request to LutronPi to get requested dimmer/switch (zone) status
 def refresh(zoneDevice) {
-	def zBridge = zoneDevice.device.deviceNetworkId.tokenize('.')[0]
-
 	log.debug "refresh by ${zoneDevice.device.getDisplayName()} ${zoneDevice.device.deviceNetworkId} sent to LutronPi"
-	sendToLutronPi('POST','/status',[bridge:zBridge, zone:(zoneDevice.getDataValue('zone')?:0)])
+	sendToLutronPi('POST', '/status' ,buildLPiBaseRequest(zoneDevice))
 }
 
 // Send request to turn zone on (on assumes level of 100)
 def on(zoneDevice, rate = null) {
-	def zBridge = zoneDevice.device.deviceNetworkId.tokenize('.')[0]
-
 	log.debug "ON by ${zoneDevice.device.getDisplayName()} ${zoneDevice.device.deviceNetworkId} sent to LutronPi"
-	sendToLutronPi('POST','/on',[bridge:zBridge, zone:(zoneDevice.getDataValue('zone')?:0), fadeSec:(rate?:0)])
+	sendToLutronPi('POST', '/on', buildLPiBaseRequest(zoneDevice) + [fadeSec: (rate?:0)])
 }
 
 // Send request to turn zone off (level 0)
@@ -1089,40 +1437,33 @@ def off(zoneDevice, rate = null) {
 
 // Send request to fade zone raise/lower/stop
 def fadeLevel(zoneDevice, fadeCmd) {
-	def zBridge = zoneDevice.device.deviceNetworkId.tokenize('.')[0]
-
 	log.debug "fadeLevel $fadeCmd by ${zoneDevice.device.getDisplayName()} ${zoneDevice.device.deviceNetworkId} sent to LutronPi"
-	sendToLutronPi('POST','/setLevel',[bridge:zBridge, zone:(zoneDevice.getDataValue('zone')?:0) as Integer, level:fadeCmd])
+	sendToLutronPi('POST', '/setLevel', buildLPiBaseRequest(zoneDevice) + [level:fadeCmd])
 }
 
 // Send request to set device to a specific level, optionally with a specified fade time (only works on Pro bridges)
 def setLevel(zoneDevice, level, rate = null) {
-	def zBridge = zoneDevice.device.deviceNetworkId.tokenize('.')[0]
-
 	log.debug "setLevel by ${zoneDevice.device.getDisplayName()} ${zoneDevice.device.deviceNetworkId} sent to LutronPi"
-	sendToLutronPi('POST','/setLevel',[bridge:zBridge, zone:(zoneDevice.getDataValue('zone')?:0) as Integer, level:level, fadeSec:(rate?:0)])
+	sendToLutronPi('POST', '/setLevel', buildLPiBaseRequest(zoneDevice) + [level: level, fadeSec: (rate?:0)])
 }
 
 def runScene(sceneDevice) {
-	def sceneID = sceneDevice.device.deviceNetworkId.tokenize('.')
-
 	log.debug "Scene ${sceneDevice.device.getDisplayName()} ${sceneDevice.device.deviceNetworkId} sent to LutronPi"
-	sendToLutronPi('POST','/scene',[bridge:sceneID[0], virtualButton:sceneID[1] as Integer])
+	sendToLutronPi('POST', '/scene', buildLPiBaseRequest(sceneDevice) +
+	                                 [virtualButton: sceneNumberOfDNI(sceneDevice.device.deviceNetworkId) as Integer])
 }
 
 def buttonPoke(buttonDevice, buttonButton, action) {
-	def buttonID = buttonDevice.device.deviceNetworkId.tokenize('.')
-
 	log.debug "Button ${buttonDevice.device.getDisplayName()} ${buttonDevice.device.deviceNetworkId} (lipID=${buttonDevice.getDataValue("lipID")}) button=$buttonButton action=$action sent to LutronPi"
-	sendToLutronPi('POST','/button',[bridge:buttonID[0], deviceSN:buttonID[1], buttonNumber:buttonButton, action:action])
+	sendToLutronPi('POST', '/button', buildLPiBaseRequest(buttonDevice) +
+	                                  [deviceSN: serialNumberOfDNI(buttonDevice.device.deviceNetworkId), buttonNumber: buttonButton, action: action])
 }
 
 def buttonMode(buttonDevice, buttonModeMap) {
-	def buttonID = buttonDevice.device.deviceNetworkId.tokenize('.')
-
 	log.debug "Button ${buttonDevice.device.getDisplayName()} ${buttonDevice.device.deviceNetworkId} (lipID=${buttonDevice.getDataValue("lipID")}) buttons=$buttonModeMap sent to LutronPi"
-	sendToLutronPi('POST','/buttonmode',[bridge:buttonID[0], deviceSN:buttonID[1],
-	                                    pushTime:picoShortPushTime, repeatTime:picoRepeatHoldIntervalTime, buttons: buttonModeMap])
+	sendToLutronPi('POST', '/buttonmode', buildLPiBaseRequest(buttonDevice) +
+	                                      [deviceSN: serialNumberOfDNI(buttonDevice.device.deviceNetworkId),
+	                                       pushTime: picoShortPushTime, repeatTime: picoRepeatHoldIntervalTime, buttons: buttonModeMap])
 }
 
 def renameChildDevice(aChildDevice, newDeviceName) {
@@ -1134,10 +1475,10 @@ private sendToLutronPi(String httpVerb, String httpPath, content = [:], callback
 		return
 
 	def aLutronPi = lutronPiMap[selectedLPi]
-	def headers = [
-		HOST: aLutronPi.ip + ':' + aLutronPi.port,
-		'Content-Type': 'application/json'
-				 ]
+	def headers =
+	    [HOST: aLutronPi.ip + ':' + aLutronPi.port,
+	     'Content-Type': 'application/json'
+	    ]
 
 	def sendHubAction = new physicalgraph.device.HubAction(
 		[method: httpVerb,

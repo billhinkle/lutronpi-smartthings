@@ -13,6 +13,7 @@
  *  Based on SmartThings example LAN device handler and "Raspberry Pi Lutron Caseta" by Nate Schwartz njschwartz
  *		/ contributions marked wjh by Bill Hinkle (github: billhinkle)
  *	v1.0.0.00	2018-05-01	wjh	Initial version: IP:port to common format; support for bridge status polling and bridge data display
+ *	v1.0.0.01	2018-10-05	wjh	Added a contact capability for external monitoring of status: online (closed) vs offline (open)
  */
 
 metadata {
@@ -21,6 +22,7 @@ metadata {
 		capability "Bridge"
 		capability "Polling"
 		capability "Refresh"
+		capability "Contact Sensor"	// attribute:[contact:[action:[closed,open]]] closed=online/open=offline
         
 		command "sync"
         command "bridgeUpdate"
@@ -82,6 +84,7 @@ def sync(ip, port) {
     def nwAText = 'OFFLINE'
 	if (ip) {
 		sendEvent(name: 'commStatus', value: 'ONLINE')
+		sendEvent(name: 'contact', value: 'closed')
 		updateDataValue('ip', ip as String)
         nwAText = "IP: ${ip}"
 		if (port) {
@@ -91,6 +94,7 @@ def sync(ip, port) {
 	}
     else {
     	sendEvent(name: 'commStatus', value: 'OFFLINE')
+		sendEvent(name: 'contact', value: 'open')
 		sendEvent(name: 'bridgeInfo', value: '');
 	}
 	log.info "Got a sync update from SSDP: $nwAText}"
